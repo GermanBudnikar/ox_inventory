@@ -185,4 +185,236 @@ return {
             usetime = 3500
 		}
 	},
+
+	['alive_chicken'] = {
+		label = 'living chicken',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['blowpipe'] = {
+		label = 'blowtorch',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['bread'] = {
+		label = 'bread',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['cannabis'] = {
+		label = 'cannabis',
+		weight = 3,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['carokit'] = {
+		label = 'body kit',
+		weight = 3,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['carotool'] = {
+		label = 'tools',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['clothe'] = {
+		label = 'cloth',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['copper'] = {
+		label = 'copper',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['cutted_wood'] = {
+		label = 'madeira cortada',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['diamond'] = {
+		label = 'diamante',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['essence'] = {
+		label = 'essência',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['fabric'] = {
+		label = 'tecido',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['fish'] = {
+		label = 'peixe',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['fixkit'] = {
+		label = 'kit de reparo',
+		weight = 3,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['fixtool'] = {
+		label = 'ferramentas de reparo',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['gazbottle'] = {
+		label = 'galão de combustível',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['gold'] = {
+		label = 'ouro',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['iron'] = {
+		label = 'ferro',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['marijuana'] = {
+		label = 'maconha',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['medikit'] = {
+		label = 'kit médico',
+		weight = 2,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['packaged_chicken'] = {
+		label = 'filé de frango',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['packaged_plank'] = {
+		label = 'madeira empacotada',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['petrol'] = {
+		label = 'Óleo',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['petrol_raffin'] = {
+		label = 'Óleo processado',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['slaughtered_chicken'] = {
+		label = 'galinha morta',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['stone'] = {
+		label = 'pedra',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['washed_stone'] = {
+		label = 'pedra polida',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['wood'] = {
+		label = 'madeira',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
+
+	['wool'] = {
+		label = 'lã',
+		weight = 1,
+		stack = true,
+		close = true,
+		description = nil
+	},
 }
