@@ -836,8 +836,8 @@ lib.onCache('seat', function(seat)
 				local vehicleModel = GetEntityModel(cache.vehicle)
 
 				if seat == -1 then
-					if vehicleModel == `firetruk` then
-						SetCurrentPedVehicleWeapon(cache.ped, `VEHICLE_WEAPON_WATER_CANNON`)
+					if vehicleModel == `firetruk` or vehicleModel == `riot2` then
+						SetCurrentPedVehicleWeapon(cache.ped, `WATER_CANNON`)
 					end
 				end
 			else Utils.WeaponWheel(false) end
