@@ -140,7 +140,8 @@ lib.callback.register('ox_inventory:buyItem', function(source, data)
 					data.count = fromData.count
 				end
 
-			elseif fromData.license and shared.framework == 'esx' and not db.selectLicense(fromData.license, playerInv.owner) then
+				---@todo move licenses to bridge
+			elseif fromData.license and (shared.framework == 'esx' and not db.selectLicense(fromData.license, playerInv.owner) or shared.framework == 'qb' and not server.GetPlayerFromId(source)?.PlayerData.metadata[fromData.license]) then
 				return false, false, { type = 'error', description = shared.locale('item_unlicensed') }
 
 			elseif fromData.grade then
@@ -173,7 +174,7 @@ lib.callback.register('ox_inventory:buyItem', function(source, data)
 					end
 
 					Inventory.RemoveItem(source, currency, price)
-					if shared.framework == 'esx' then Inventory.SyncInventory(playerInv) end
+					if server.syncInventory then server.syncInventory(playerInv) end
 					local message = shared.locale('purchased_for', count, fromItem.label, (currency == 'money' and shared.locale('$') or comma_value(price)), (currency == 'money' and comma_value(price) or ' '..Items(currency).label))
 
 					-- Only log purchases for items worth $500 or more

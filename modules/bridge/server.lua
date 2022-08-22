@@ -28,8 +28,46 @@ function server.setPlayerData(player)
 	}
 end
 
-if shared.framework == 'esx' then
+local Inventory
+
+SetTimeout(0, function() Inventory = server.inventory end)
+
+local function playerDropped(source)
+	local inv = Inventory(source)
+
+	if inv then
+		local openInventory = inv.open and Inventories[inv.open]
+
+		if openInventory then
+			openInventory:set('open', false)
+		end
+
+		if shared.framework ~= 'esx' then
+			db.savePlayer(inv.owner, json.encode(inv:minimal()))
+		end
+
+		Inventory.Remove(source)
+	end
+end
+
+if shared.framework == 'ox' then
+	AddEventHandler('ox:playerLogout', playerDropped)
+
+	AddEventHandler('ox:setGroup', function(source, name, grade)
+		local inventory = Inventory(source)
+		if not inventory then return end
+		inventory.player.groups[name] = grade
+	end)
+elseif shared.framework == 'esx' then
 	local ESX
+
+	AddEventHandler('esx:playerDropped', playerDropped)
+
+	AddEventHandler('esx:setJob', function(source, job)
+		local inventory = Inventory(source)
+		if not inventory then return end
+		inventory.player.groups[job.name] = job.grade
+	end)
 
 	SetTimeout(4000, function()
 		ESX = exports.es_extended:getSharedObject()
@@ -42,9 +80,8 @@ if shared.framework == 'esx' then
 		server.GetPlayerFromId = ESX.GetPlayerFromId
 		server.UsableItemsCallbacks = ESX.GetUsableItems()
 
-		for i = 1, #ESX.Players do
-			local player = ESX.Players[i]
-			exports.ox_inventory:setPlayerInventory(player, player?.inventory)
+		for _, player in pairs(ESX.Players) do
+			server.setPlayerInventory(player, player?.inventory)
 		end
 	end)
 
@@ -67,4 +104,206 @@ if shared.framework == 'esx' then
 			dateofbirth = player.dateofbirth or player.variables.dateofbirth,
 		}
 	end
+
+	function server.syncInventory(inv)
+		local money = table.clone(server.accounts)
+
+		for _, v in pairs(inv.items) do
+			if money[v.name] then
+				money[v.name] += v.count
+			end
+		end
+
+		local player = server.GetPlayerFromId(inv.id)
+		player.syncInventory(inv.weight, inv.maxWeight, inv.items, money)
+	end
+elseif shared.framework == 'qb' then
+	local QBCore = exports['qb-core']:GetCoreObject()
+
+	AddEventHandler('QBCore:Server:OnPlayerUnload', playerDropped)
+
+	AddEventHandler('QBCore:Server:OnJobUpdate', function(source, job)
+		local inventory = Inventories[source]
+		if not inventory then return end
+		inventory.player.groups[job.name] = job.grade.level
+	end)
+
+	AddEventHandler('QBCore:Server:OnGangUpdate', function(source, gang)
+		local inventory = Inventories[source]
+		if not inventory then return end
+		inventory.player.groups[gang.name] = gang.grade.level
+	end)
+
+	AddEventHandler('onResourceStart', function(resource)
+		if resource ~= 'qb-weapons' or resource ~= 'qb-shops' then return end
+		StopResource(resource)
+	end)
+
+	SetTimeout(4000, function()
+		local qbPlayers = QBCore.Functions.GetQBPlayers()
+		for _, Player in pairs(qbPlayers) do
+			if Player then
+				QBCore.Functions.AddPlayerField(Player.PlayerData.source, 'syncInventory', function(_, _, items, money)
+					Player.Functions.SetPlayerData('items', items)
+					Player.Functions.SetPlayerData('inventory', items)
+
+					if money.money then Player.Functions.SetMoney('cash', money.money, "Sync money with inventory") end
+				end)
+
+				Player.Functions.SetPlayerData('inventory', Player.PlayerData.items)
+				Player.PlayerData.inventory = Player.PlayerData.items
+				Player.PlayerData.identifier = Player.PlayerData.citizenid
+				server.setPlayerInventory(Player.PlayerData)
+				Inventory.SetItem(Player.PlayerData.source, 'money', Player.PlayerData.money.cash)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "AddItem", function(item, amount, slot, info)
+					Inventory.AddItem(Player.PlayerData.source, item, amount, info, slot)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "RemoveItem", function(item, amount, slot)
+					Inventory.RemoveItem(Player.PlayerData.source, item, amount, nil, slot)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemBySlot", function(slot)
+					return Inventory.GetSlot(Player.PlayerData.source, slot)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemByName", function(item)
+					return Inventory.GetItem(Player.PlayerData.source, item, nil, false)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemsByName", function(item)
+					return Inventory.Search(Player.PlayerData.source, 'slots', item)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "ClearInventory", function(filterItems)
+					Inventory.Clear(Player.PlayerData.source, filterItems)
+				end)
+
+				QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "SetInventory", function()
+					-- ox_inventory's item structure is not compatible with qb-inventory's one so we don't support it
+					shared.info('Player.Functions.SetInventory is unsupported for ox_inventory, please use exports.ox_inventory:setPlayerInventory instead.')
+				end)
+			end
+		end
+
+		local weapState = GetResourceState('qb-weapons')
+		if  weapState ~= 'missing' and (weapState == 'started' or weapState == 'starting') then
+			StopResource('qb-weapons')
+		end
+
+		local shopState = GetResourceState('qb-shops')
+		if  shopState ~= 'missing' and (shopState == 'started' or shopState == 'starting') then
+			StopResource('qb-shops')
+		end
+	end)
+
+	local itemCallbacks = {}
+
+	-- Accounts that need to be synced with physical items
+	server.accounts = {
+		money = 0
+	}
+
+	QBCore.Functions.SetMethod('CreateUseableItem', function(item, cb)
+		itemCallbacks[item] = cb
+	end)
+
+	function server.UseItem(source, itemName, ...)
+		local callback = itemCallbacks[itemName].callback or itemCallbacks[itemName].cb or type(itemCallbacks[itemName]) == "function" and itemCallbacks[itemName]
+
+		if not callback then return end
+
+		callback(source, itemName, ...)
+	end
+
+	AddEventHandler('QBCore:Server:OnMoneyChange', function(src, account, amount)
+		if account ~= "cash" then return end
+		Inventory.SetItem(src, 'money', amount)
+	end)
+
+	AddEventHandler('QBCore:Server:PlayerLoaded', function(Player)
+		QBCore.Functions.AddPlayerField(Player.PlayerData.source, 'syncInventory', function(_, _, items, money)
+			Player.Functions.SetPlayerData('items', items)
+			Player.Functions.SetPlayerData('inventory', items)
+
+			if money.money then Player.Functions.SetMoney('cash', money.money, "Sync money with inventory") end
+		end)
+
+		Player.Functions.SetPlayerData('inventory', Player.PlayerData.items)
+		Player.PlayerData.inventory = Player.PlayerData.items
+		Player.PlayerData.identifier = Player.PlayerData.citizenid
+		server.setPlayerInventory(Player.PlayerData)
+		Inventory.SetItem(Player.PlayerData.source, 'money', Player.PlayerData.money.cash)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "AddItem", function(item, amount, slot, info)
+			Inventory.AddItem(Player.PlayerData.source, item, amount, info, slot)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "RemoveItem", function(item, amount, slot)
+			Inventory.RemoveItem(Player.PlayerData.source, item, amount, nil, slot)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemBySlot", function(slot)
+			return Inventory.GetSlot(Player.PlayerData.source, slot)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemByName", function(item)
+			return Inventory.GetItem(Player.PlayerData.source, item, nil, false)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemsByName", function(item)
+			return Inventory.Search(Player.PlayerData.source, 'slots', item)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "ClearInventory", function(filterItems)
+			Inventory.Clear(Player.PlayerData.source, filterItems)
+		end)
+
+		QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "SetInventory", function()
+			-- ox_inventory's item structure is not compatible with qb-inventory's one so we don't support it
+			shared.info('Player.Functions.SetInventory is unsupported for ox_inventory, please use exports.ox_inventory:setPlayerInventory instead.')
+		end)
+	end)
+
+	local usableItems = {}
+
+	for k, v in pairs(QBCore.Shared.Items) do
+		if v.useable then usableItems[k] = true end
+	end
+
+	server.UsableItemsCallbacks = usableItems
+	server.GetPlayerFromId = QBCore.Functions.GetPlayer
+
+	function server.setPlayerData(player)
+		local groups = {
+			[player.job.name] = player.job.grade.level,
+			[player.gang.name] = player.gang.grade.level
+		}
+
+		return {
+			source = player.source,
+			name = player.name,
+			groups = groups,
+			sex = player.charinfo.gender,
+			dateofbirth = player.charinfo.birthdate,
+		}
+	end
+
+	function server.syncInventory(inv)
+		local money = table.clone(server.accounts)
+
+		for _, v in pairs(inv.items) do
+			if money[v.name] then
+				money[v.name] += v.count
+			end
+		end
+
+		local player = server.GetPlayerFromId(inv.id)
+		player.syncInventory(inv.weight, inv.maxWeight, inv.items, money)
+	end
+else
+	AddEventHandler('playerDropped', function()
+		playerDropped(source)
+	end)
 end

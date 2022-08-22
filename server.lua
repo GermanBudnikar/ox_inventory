@@ -9,7 +9,7 @@ local Items = server.items
 ---@param data table
 --- player requires source, identifier, and name
 --- optionally, it should contain jobs/groups, sex, and dateofbirth
-local function setPlayerInventory(player, data)
+function server.setPlayerInventory(player, data)
 	while not shared.ready do Wait(0) end
 
 	if not data then
@@ -47,11 +47,11 @@ local function setPlayerInventory(player, data)
 	inv.player = server.setPlayerData(player)
 	inv.player.ped = GetPlayerPed(player.source)
 
-	if shared.framework == 'esx' then Inventory.SyncInventory(inv) end
+	if server.syncInventory then server.syncInventory(inv) end
 	TriggerClientEvent('ox_inventory:setPlayerInventory', player.source, Inventory.Drops, inventory, totalWeight, server.UsableItemsCallbacks, inv.player, player.source)
 end
-exports('setPlayerInventory', setPlayerInventory)
-AddEventHandler('ox_inventory:setPlayerInventory', setPlayerInventory)
+exports('setPlayerInventory', server.setPlayerInventory)
+AddEventHandler('ox_inventory:setPlayerInventory', server.setPlayerInventory)
 
 local Vehicles = data 'vehicles'
 
@@ -63,6 +63,11 @@ lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 
 	if right then
 		if right.open ~= source then return end
+
+		if right.player then
+			TriggerClientEvent('ox_inventory:closeInventory', right.player.source, true)
+		end
+
 		right:set('open', false)
 		left:set('open', false)
 		right = nil
@@ -156,6 +161,7 @@ end)
 
 local Licenses = data 'licenses'
 
+---@todo licenses functions as part of bridge (keep the callback here)
 lib.callback.register('ox_inventory:buyLicense', function(source, id)
 	if shared.framework == 'esx' then
 		local license = Licenses[id]
@@ -170,6 +176,27 @@ lib.callback.register('ox_inventory:buyLicense', function(source, id)
 			else
 				Inventory.RemoveItem(inventory, 'money', license.price)
 				TriggerEvent('esx_license:addLicense', source, 'weapon')
+
+				return true, 'bought_weapon_license'
+			end
+		end
+	elseif shared.framework == 'qb' then
+		local license = Licenses[id]
+		if license then
+			local inventory = Inventory(source)
+			local player = server.GetPlayerFromId(source)
+
+			if not player then return false, 'invalid_player' end
+
+			if player.PlayerData.metadata.licences.weapon then
+				return false, 'has_weapon_license'
+			elseif Inventory.GetItem(inventory, 'money', false, true) < license.price then
+				return false, 'poor_weapon_license'
+			else
+				Inventory.RemoveItem(inventory, 'money', license.price)
+
+				player.PlayerData.metadata.licences.weapon = true
+				player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
 
 				return true, 'bought_weapon_license'
 			end
