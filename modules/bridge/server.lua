@@ -28,9 +28,17 @@ function server.setPlayerData(player)
 	}
 end
 
-local Inventory
+function server.buyLicense()
+	shared.warning('Licenses are not yet supported without esx or qb. Available soon™.')
+end
 
-SetTimeout(0, function() Inventory = server.inventory end)
+local Inventory
+local Items
+
+SetTimeout(0, function()
+	Inventory = server.inventory
+	Items = server.items
+end)
 
 local function playerDropped(source)
 	local inv = Inventory(source)
@@ -116,6 +124,45 @@ elseif shared.framework == 'esx' then
 
 		local player = server.GetPlayerFromId(inv.id)
 		player.syncInventory(inv.weight, inv.maxWeight, inv.items, money)
+	end
+
+	function server.buyLicense(inv, license)
+		if db.selectLicense(license.name, inv.owner) then
+			return false, 'has_weapon_license'
+		elseif Inventory.GetItem(inv, 'money', false, true) < license.price then
+			return false, 'poor_weapon_license'
+		end
+
+		Inventory.RemoveItem(inv, 'money', license.price)
+		TriggerEvent('esx_license:addLicense', source, 'weapon')
+
+		return true, 'bought_weapon_license'
+	end
+
+	--- Takes traditional item data and updates it to support ox_inventory, i.e.
+	--- ```
+	--- Old: {"cola":1, "burger":3}
+	--- New: [{"slot":1,"name":"cola","count":1}, {"slot":2,"name":"burger","count":3}]
+	---```
+	function server.convertInventory(playerId, items)
+		if type(items) == 'table' then
+			local returnData, totalWeight = table.create(#items, 0), 0
+			local slot = 0
+
+			for name, count in pairs(items) do
+				local item = Items(name)
+
+				if item then
+					local metadata = Items.Metadata(playerId, item, false, count)
+					local weight = Inventory.SlotWeight(item, {count=count, metadata=metadata})
+					totalWeight = totalWeight + weight
+					slot += 1
+					returnData[slot] = {name = item.name, label = item.label, weight = weight, slot = slot, count = count, description = item.description, metadata = metadata, stack = item.stack, close = item.close}
+				end
+			end
+
+			return returnData, totalWeight
+		end
 	end
 elseif shared.framework == 'qb' then
 	local QBCore = exports['qb-core']:GetCoreObject()
@@ -210,7 +257,7 @@ elseif shared.framework == 'qb' then
 	end)
 
 	function server.UseItem(source, itemName, ...)
-		local callback = itemCallbacks[itemName].callback or itemCallbacks[itemName].cb or type(itemCallbacks[itemName]) == "function" and itemCallbacks[itemName]
+		local callback = type(itemCallbacks[itemName]) == 'function' and itemCallbacks[itemName] or type(itemCallbacks[itemName]) == 'table' and (rawget(itemCallbacks[itemName], '__cfx_functionReference') and itemCallbacks[itemName] or itemCallbacks[itemName].cb or itemCallbacks[itemName].callback)
 
 		if not callback then return end
 
@@ -302,8 +349,27 @@ elseif shared.framework == 'qb' then
 		local player = server.GetPlayerFromId(inv.id)
 		player.syncInventory(inv.weight, inv.maxWeight, inv.items, money)
 	end
+
+	function server.buyLicense(inv, license)
+		local player = server.GetPlayerFromId(source)
+		if not player then return end
+
+		if player.PlayerData.metadata.licences.weapon then
+			return false, 'has_weapon_license'
+		elseif Inventory.GetItem(inv, 'money', false, true) < license.price then
+			return false, 'poor_weapon_license'
+		end
+
+		Inventory.RemoveItem(inv, 'money', license.price)
+		player.PlayerData.metadata.licences.weapon = true
+		player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
+
+		return true, 'bought_weapon_license'
+	end
 else
 	AddEventHandler('playerDropped', function()
 		playerDropped(source)
 	end)
 end
+
+if server.convertInventory then exports('ConvertItems', server.convertInventory) end

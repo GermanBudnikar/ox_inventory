@@ -22,23 +22,25 @@ function server.setPlayerInventory(player, data)
 	if data then
 		local ostime = os.time()
 
-		for _, v in pairs(data) do
-			if type(v) == 'number' then
-				return error(('Inventory for player.%s (%s) contains invalid data. Ensure you have converted inventories to the correct format.'):format(player.source, GetPlayerName(player.source)))
-			end
+		if table.type(data) == 'array' then
+			for _, v in pairs(data) do
+				local item = Items(v.name)
 
-			local item = Items(v.name)
+				if item then
+					if v.metadata then
+						v.metadata = Items.CheckMetadata(v.metadata, item, v.name, ostime)
+					end
 
-			if item then
-				if v.metadata then
-					v.metadata = Items.CheckMetadata(v.metadata, item, v.name, ostime)
+					local weight = Inventory.SlotWeight(item, v)
+					totalWeight = totalWeight + weight
+
+					inventory[v.slot] = {name = item.name, label = item.label, weight = weight, slot = v.slot, count = v.count, description = item.description, metadata = v.metadata, stack = item.stack, close = item.close}
 				end
-
-				local weight = Inventory.SlotWeight(item, v)
-				totalWeight = totalWeight + weight
-
-				inventory[v.slot] = {name = item.name, label = item.label, weight = weight, slot = v.slot, count = v.count, description = item.description, metadata = v.metadata, stack = item.stack, close = item.close}
 			end
+		elseif server.convertInventory then
+			inventory, totalWeight = server.convertInventory(player.source, data)
+		else
+			return error(('Inventory for player.%s (%s) contains invalid data. Ensure you have converted inventories to the correct format.'):format(player.source, GetPlayerName(player.source)))
 		end
 	end
 
@@ -163,47 +165,13 @@ local Licenses = data 'licenses'
 
 ---@todo licenses functions as part of bridge (keep the callback here)
 lib.callback.register('ox_inventory:buyLicense', function(source, id)
-	if shared.framework == 'esx' then
-		local license = Licenses[id]
-		if license then
-			local inventory = Inventory(source)
-			local result = db.selectLicense(license.name, inventory.owner)
+	local license = Licenses[id]
+	if not license then return end
 
-			if result then
-				return false, 'has_weapon_license'
-			elseif Inventory.GetItem(inventory, 'money', false, true) < license.price then
-				return false, 'poor_weapon_license'
-			else
-				Inventory.RemoveItem(inventory, 'money', license.price)
-				TriggerEvent('esx_license:addLicense', source, 'weapon')
+	local inventory = Inventory(source)
+	if not inventory then return end
 
-				return true, 'bought_weapon_license'
-			end
-		end
-	elseif shared.framework == 'qb' then
-		local license = Licenses[id]
-		if license then
-			local inventory = Inventory(source)
-			local player = server.GetPlayerFromId(source)
-
-			if not player then return false, 'invalid_player' end
-
-			if player.PlayerData.metadata.licences.weapon then
-				return false, 'has_weapon_license'
-			elseif Inventory.GetItem(inventory, 'money', false, true) < license.price then
-				return false, 'poor_weapon_license'
-			else
-				Inventory.RemoveItem(inventory, 'money', license.price)
-
-				player.PlayerData.metadata.licences.weapon = true
-				player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
-
-				return true, 'bought_weapon_license'
-			end
-		end
-	else
-		shared.warning('Licenses can only be purchased when using es_extended and esx_licenses. Integrated functionality will be added soon.')
-	end
+	return server.buyLicense(inventory, license)
 end)
 
 lib.callback.register('ox_inventory:getItemCount', function(source, item, metadata, target)
