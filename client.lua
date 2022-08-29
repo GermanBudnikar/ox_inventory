@@ -18,8 +18,12 @@ exports('setStashTarget', function(id, owner)
 	StashTarget = id and {id=id, owner=owner}
 end)
 
+---@type boolean?
 local invBusy = true
+
+---@type boolean?
 local invOpen = false
+
 local plyState = LocalPlayer.state
 
 plyState:set('invBusy', true, false)
@@ -57,8 +61,8 @@ local function closeTrunk()
 	end
 end
 
----@param inv string inventory type
----@param data table id and owner
+---@param inv string
+---@param data table | string | number
 ---@return boolean?
 function client.openInventory(inv, data)
 	if invOpen then
@@ -206,10 +210,8 @@ local function useItem(data, cb)
 					TriggerServerEvent('ox_inventory:removeItem', result.name, result.consume, result.metadata, result.slot, true)
 				end
 
-				if data.status then
-					for k, v in pairs(data.status) do
-						if v > 0 then TriggerEvent('esx_status:add', k, v) else TriggerEvent('esx_status:remove', k, -v) end
-					end
+				if data.status and client.setPlayerStatus then
+					client.setPlayerStatus(data.status)
 				end
 
 				if data.notification then
@@ -238,8 +240,9 @@ local function useSlot(slot)
 	if PlayerData.loaded and not PlayerData.dead and not invBusy and not lib.progressActive() then
 		local item = PlayerData.inventory[slot]
 		if not item then return end
+
 		local data = item and Items[item.name]
-		if not data or not data.usable then return end
+		if not data then return end
 
 		if data.component and not currentWeapon then
 			return lib.notify({ type = 'error', description = shared.locale('weapon_hand_required') })
@@ -369,7 +372,7 @@ end
 local function canOpenTarget(ped)
 	return IsPedFatallyInjured(ped)
 	or IsEntityPlayingAnim(ped, 'dead', 'dead_a', 3)
-	or IsPedCuffed(ped, 120, true)
+	or IsPedCuffed(ped)
 	or IsEntityPlayingAnim(ped, 'mp_arresting', 'idle', 3)
 	or IsEntityPlayingAnim(ped, 'missminuteman_1ig_2', 'handsup_base', 3)
 	or IsEntityPlayingAnim(ped, 'missminuteman_1ig_2', 'handsup_enter', 3)
@@ -406,6 +409,9 @@ function OnPlayerData(key, val)
 
 	Utils.WeaponWheel()
 end
+
+-- People consistently ignore errors when one of the "modules" failed to load
+if not Utils or not Weapon or not Items or not Shops or not Inventory then return end
 
 local function registerCommands()
 
@@ -569,7 +575,10 @@ local function registerCommands()
 		if currentWeapon?.ammo then
 			if currentWeapon.metadata.durability > 0 then
 				local ammo = Inventory.Search(1, currentWeapon.ammo)
-				if ammo[1] then useSlot(ammo[1].slot) end
+
+				if ammo and ammo[1] then
+					useSlot(ammo[1].slot)
+				end
 			else
 				lib.notify({ type = 'error', description = shared.locale('no_durability', currentWeapon.label) })
 			end
@@ -599,6 +608,7 @@ local function registerCommands()
 			end
 		end, false)
 
+		---@diagnostic disable-next-line: param-type-mismatch
 		RegisterKeyMapping(hotkey, shared.locale('use_hotbar', i), 'keyboard', i)
 		TriggerEvent('chat:removeSuggestion', '/'..hotkey)
 	end
@@ -620,7 +630,7 @@ function client.closeInventory(server)
 			TriggerServerEvent('ox_inventory:closeInventory')
 		end
 
-		currentInventory = false
+		currentInventory = nil
 		plyState.invOpen = false
 		defaultInventory.coords = nil
 	end
@@ -737,7 +747,8 @@ end)
 
 local function nearbyDrop(self)
 	if not self.instance or self.instance == currentInstance then
-		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 150, 30, 30, 222, false, false, false, true, false, false, false)
+		---@diagnostic disable-next-line: param-type-mismatch
+		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 150, 30, 30, 222, false, false, 0, true, false, false, false)
 	end
 end
 
@@ -775,6 +786,7 @@ end)
 
 local uiLoaded = false
 
+---@type function?
 local function setStateBagHandler(stateId)
 	AddStateBagChangeHandler('invOpen', stateId, function(_, _, value)
 		invOpen = value
@@ -820,7 +832,7 @@ lib.onCache('seat', function(seat)
 	Utils.WeaponWheel(false)
 end)
 
-RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inventory, weight, itemCallbacks, player, source)
+RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inventory, weight, player, source)
 	PlayerData = player
 	PlayerData.id = cache.playerId
 	PlayerData.source = source
@@ -839,7 +851,9 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 		Items[data.name].count += data.count
 	end
 
-	if Items['phone']?.count < 1 then
+	local phone = Items.phone
+
+	if phone and phone.count < 1 then
 		pcall(function()
 			return exports.npwd:setPhoneDisabled(true)
 		end)
@@ -853,9 +867,8 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	local ItemData = table.create(0, #Items)
 
 	for _, v in pairs(Items) do
-		v.usable = (v.client and next(v.client) or v.effect or v.consume == 0 or (itemCallbacks and itemCallbacks[v.name]) or v.weapon or v.component or v.ammo or v.tint) and true
-
 		local buttons = {}
+
 		if v.buttons then
 			for id, button in pairs(v.buttons) do
 				buttons[id] = button.label
@@ -864,7 +877,6 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 
 		ItemData[v.name] = {
 			label = v.label,
-			usable = v.usable,
 			stack = v.stack,
 			close = v.close,
 			description = v.description,
@@ -919,7 +931,8 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	Utils.WeaponWheel(false)
 
 	local function nearbyLicense(self)
-		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 30, 150, 30, 222, false, false, false, true, false, false, false)
+		---@diagnostic disable-next-line: param-type-mismatch
+		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 30, 150, 30, 222, false, false, 0, true, false, false, false)
 
 		if self.currentDistance < 1.2 and lib.points.closest().id == self.id and IsControlJustReleased(0, 38) then
 			lib.callback('ox_inventory:buyLicense', 1000, function(success, message)
@@ -1077,7 +1090,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 								currentWeapon.timer = 0
 								local ammo = Inventory.Search(1, currentWeapon.ammo)
 
-								if ammo[1] then
+								if ammo and ammo[1] then
 									TriggerServerEvent('ox_inventory:updateWeapon', 'ammo', currentWeapon.metadata.ammo)
 									useSlot(ammo[1].slot)
 								end

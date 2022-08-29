@@ -44,7 +44,7 @@ local function playerDropped(source)
 	local inv = Inventory(source)
 
 	if inv then
-		local openInventory = inv.open and Inventories[inv.open]
+		local openInventory = inv.open and Inventory(inv.open)
 
 		if openInventory then
 			openInventory:set('open', false)
@@ -71,13 +71,14 @@ elseif shared.framework == 'esx' then
 
 	AddEventHandler('esx:playerDropped', playerDropped)
 
-	AddEventHandler('esx:setJob', function(source, job)
+	AddEventHandler('esx:setJob', function(source, job, lastJob)
 		local inventory = Inventory(source)
 		if not inventory then return end
+		inventory.player.groups[lastJob.name] = nil
 		inventory.player.groups[job.name] = job.grade
 	end)
 
-	SetTimeout(4000, function()
+	SetTimeout(500, function()
 		ESX = exports.es_extended:getSharedObject()
 
 		if ESX.CreatePickup then
@@ -86,7 +87,6 @@ elseif shared.framework == 'esx' then
 
 		server.UseItem = ESX.UseItem
 		server.GetPlayerFromId = ESX.GetPlayerFromId
-		server.UsableItemsCallbacks = ESX.GetUsableItems()
 
 		for _, player in pairs(ESX.Players) do
 			server.setPlayerInventory(player, player?.inventory)
@@ -134,7 +134,7 @@ elseif shared.framework == 'esx' then
 		end
 
 		Inventory.RemoveItem(inv, 'money', license.price)
-		TriggerEvent('esx_license:addLicense', source, 'weapon')
+		TriggerEvent('esx_license:addLicense', inv.id, 'weapon')
 
 		return true, 'bought_weapon_license'
 	end
@@ -146,13 +146,26 @@ elseif shared.framework == 'esx' then
 	---```
 	function server.convertInventory(playerId, items)
 		if type(items) == 'table' then
+			local player = server.GetPlayerFromId(playerId)
 			local returnData, totalWeight = table.create(#items, 0), 0
 			local slot = 0
+
+			if player then
+				for name in pairs(server.accounts) do
+					if not items[name] then
+						local account = player.getAccount(name)
+
+						if account.money then
+							items[name] = account.money
+						end
+					end
+				end
+			end
 
 			for name, count in pairs(items) do
 				local item = Items(name)
 
-				if item then
+				if item and count > 0 then
 					local metadata = Items.Metadata(playerId, item, false, count)
 					local weight = Inventory.SlotWeight(item, {count=count, metadata=metadata})
 					totalWeight = totalWeight + weight
@@ -170,14 +183,18 @@ elseif shared.framework == 'qb' then
 	AddEventHandler('QBCore:Server:OnPlayerUnload', playerDropped)
 
 	AddEventHandler('QBCore:Server:OnJobUpdate', function(source, job)
-		local inventory = Inventories[source]
+		local inventory = Inventory(source)
 		if not inventory then return end
+		inventory.player.groups[inventory.player.job] = nil
+		inventory.player.job = job.name
 		inventory.player.groups[job.name] = job.grade.level
 	end)
 
 	AddEventHandler('QBCore:Server:OnGangUpdate', function(source, gang)
-		local inventory = Inventories[source]
+		local inventory = Inventory(source)
 		if not inventory then return end
+		inventory.player.groups[inventory.player.gang] = nil
+		inventory.player.gang = gang.name
 		inventory.player.groups[gang.name] = gang.grade.level
 	end)
 
@@ -186,7 +203,7 @@ elseif shared.framework == 'qb' then
 		StopResource(resource)
 	end)
 
-	SetTimeout(4000, function()
+	SetTimeout(500, function()
 		local qbPlayers = QBCore.Functions.GetQBPlayers()
 		for _, Player in pairs(qbPlayers) do
 			if Player then
@@ -264,9 +281,10 @@ elseif shared.framework == 'qb' then
 		callback(source, itemName, ...)
 	end
 
-	AddEventHandler('QBCore:Server:OnMoneyChange', function(src, account, amount)
+	AddEventHandler('QBCore:Server:OnMoneyChange', function(src, account, amount, changeType)
 		if account ~= "cash" then return end
-		Inventory.SetItem(src, 'money', amount)
+		local item = Inventory.GetItem(src, 'money', nil, false)
+		Inventory.SetItem(src, 'money', changeType == "set" and amount or changeType == "remove" and item.count - amount or changeType == "add" and item.count + amount)
 	end)
 
 	AddEventHandler('QBCore:Server:PlayerLoaded', function(Player)
@@ -313,13 +331,6 @@ elseif shared.framework == 'qb' then
 		end)
 	end)
 
-	local usableItems = {}
-
-	for k, v in pairs(QBCore.Shared.Items) do
-		if v.useable then usableItems[k] = true end
-	end
-
-	server.UsableItemsCallbacks = usableItems
 	server.GetPlayerFromId = QBCore.Functions.GetPlayer
 
 	function server.setPlayerData(player)
@@ -334,6 +345,8 @@ elseif shared.framework == 'qb' then
 			groups = groups,
 			sex = player.charinfo.gender,
 			dateofbirth = player.charinfo.birthdate,
+			job = player.job.name,
+			gang = player.gang.name,
 		}
 	end
 

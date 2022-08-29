@@ -64,7 +64,7 @@ CreateThread(function()
 	if shared.framework == 'esx' then
 		local success, items = pcall(MySQL.query.await, 'SELECT * FROM items')
 
-		if success and #items > 0 then
+		if success and items and next(items) then
 			local dump = {}
 			local count = 0
 
@@ -103,7 +103,7 @@ CreateThread(function()
 						fileSize += 1
 
 						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"):lower(), item.weight, item.stack, item.close, item.description and ('"%s"'):format(item.description) or 'nil')
-						ItemList[formatName] = v
+						ItemList[formatName] = item
 					end
 				end
 
@@ -119,7 +119,7 @@ CreateThread(function()
 			shared.warning('Utilise \'exports.ox_inventory:Items()\', or lazy-load ESX and use ESX.Items instead.')
 		end
 
-		Wait(4000)
+		Wait(500)
 
 	elseif shared.framework == 'qb' then
 		local QBCore = exports['qb-core']:GetCoreObject()
@@ -187,7 +187,7 @@ CreateThread(function()
 						fileSize += 1
 
 						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"):lower(), item.weight, item.stack, item.close, item.description and ('"%s"'):format(item.description) or 'nil')
-						ItemList[formatName] = v
+						ItemList[formatName] = item
 					end
 				end
 
@@ -199,28 +199,24 @@ CreateThread(function()
 			end
 		end
 
-		Wait(4000)
+		Wait(500)
 	end
 
 	local clearStashes = GetConvar('inventory:clearstashes', '6 MONTH')
 
 	if clearStashes ~= '' then
-		MySQL.query(('DELETE FROM ox_inventory WHERE lastupdated < (NOW() - INTERVAL %s) OR data = "[]"'):format(clearStashes))
+		pcall(MySQL.query.await, ('DELETE FROM ox_inventory WHERE lastupdated < (NOW() - INTERVAL %s) OR data = "[]"'):format(clearStashes))
 	end
 
 	local count = 0
 
 	Wait(1000)
 
-	for _, item in pairs(ItemList) do
-		if item.consume and item.consume > 0 and server.UsableItemsCallbacks and server.UsableItemsCallbacks[item.name] then
-			server.UsableItemsCallbacks[item.name] = nil
-		end
-
+	for _ in pairs(ItemList) do
 		count += 1
 	end
 
-	shared.info('Inventory has loaded '..count..' items')
+	shared.info(('Inventory has loaded %d items'):format(count))
 	collectgarbage('collect') -- clean up from initialisation
 	shared.ready = true
 end)

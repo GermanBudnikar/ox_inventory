@@ -24,7 +24,7 @@ local function openStash(data, player)
 		local inventory = Inventories[owner and ('%s:%s'):format(stash.name, owner) or stash.name]
 
 		if not inventory then
-			inventory = Inventory.Create(stash.name, stash.label or stash.name, 'stash', stash.slots, 0, stash.weight, owner, false, stash.groups)
+			inventory = Inventory.Create(stash.name, stash.label or stash.name, 'stash', stash.slots, 0, stash.weight, owner, nil, stash.groups)
 		end
 
 		return inventory
@@ -57,7 +57,7 @@ exports('Inventory', function(id, owner)
 	end
 end)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param k string
 ---@param v any
 function Inventory.Set(inv, k, v)
@@ -87,7 +87,7 @@ function Inventory.Set(inv, k, v)
 	end
 end
 
----@param inv string | number
+---@param inv table | string | number
 ---@param key string
 function Inventory.Get(inv, key)
 	inv = Inventory(inv)
@@ -96,7 +96,7 @@ function Inventory.Get(inv, key)
 	end
 end
 
----@param inv string | number
+---@param inv table | string | number
 ---@return table items table containing minimal inventory data
 local function minimal(inv)
 	inv = Inventory(inv)
@@ -115,8 +115,8 @@ local function minimal(inv)
 	return inventory
 end
 
----@param inv string | number
----@param item table item data
+---@param inv table | string | number
+---@param item table
 ---@param count number
 ---@param metadata any
 ---@param slot any
@@ -230,7 +230,7 @@ end
 ---@param slots number
 ---@param weight number
 ---@param maxWeight number
----@param owner string
+---@param owner string | number | boolean
 ---@param items? table
 --- This should only be utilised internally!
 --- To create a stash, please use `exports.ox_inventory:RegisterStash` instead.
@@ -370,7 +370,7 @@ local function randomLoot(loot)
 	return items
 end
 
----@param inv string | number
+---@param inv table | string | number
 ---@param invType string
 ---@param items? table
 ---@return table returnData, number totalWeight, boolean true
@@ -381,6 +381,10 @@ local function generateItems(inv, invType, items)
 		elseif invType == 'vehicle' then
 			items = randomLoot(server.vehicleloot)
 		end
+	end
+
+	if not items then
+		items = {}
 	end
 
 	local returnData, totalWeight = table.create(#items, 0), 0
@@ -402,7 +406,7 @@ end
 
 ---@param id string|number
 ---@param invType string
----@param owner string
+---@param owner string | number | boolean
 function Inventory.Load(id, invType, owner)
 	local datastore, result
 
@@ -456,11 +460,11 @@ end
 
 local table = lib.table
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param metadata? any
 ---@param returnsCount? boolean
----@return table|number
+---@return table | number | nil
 function Inventory.GetItem(inv, item, metadata, returnsCount)
 	if type(item) ~= 'table' then item = Items(item) end
 
@@ -518,7 +522,7 @@ function Inventory.ContainerWeight(container, metaWeight, playerInventory)
 	playerInventory.weight += container.weight
 end
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param count number
 ---@param metadata? table
@@ -527,7 +531,8 @@ function Inventory.SetItem(inv, item, count, metadata)
 	if item and count >= 0 then
 		inv = Inventory(inv)
 		if inv then
-			local itemCount = Inventory.GetItem(inv, item.name, metadata, true)
+			local itemCount = Inventory.GetItem(inv, item.name, metadata, true) --[[@as number]]
+
 			if count > itemCount then
 				count -= itemCount
 				Inventory.AddItem(inv, item.name, count, metadata)
@@ -539,8 +544,7 @@ function Inventory.SetItem(inv, item, count, metadata)
 	end
 end
 
----@param inv string | number
----@return table item
+---@param inv table | string | number
 function Inventory.GetCurrentWeapon(inv)
 	inv = Inventory(inv)
 
@@ -556,7 +560,7 @@ function Inventory.GetCurrentWeapon(inv)
 end
 exports('GetCurrentWeapon', Inventory.GetCurrentWeapon)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param slot number
 ---@return table? item
 function Inventory.GetSlot(inv, slot)
@@ -575,9 +579,8 @@ function Inventory.GetSlot(inv, slot)
 end
 exports('GetSlot', Inventory.GetSlot)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param slot number
----@return table item
 function Inventory.SetDurability(inv, slot, durability)
 	inv = Inventory(inv)
 
@@ -596,8 +599,8 @@ function Inventory.SetDurability(inv, slot, durability)
 end
 exports('SetDurability', Inventory.SetDurability)
 
----@param inv string | number
----@param slot number
+---@param inv table | string | number
+---@param slot number | false
 ---@param metadata table
 function Inventory.SetMetadata(inv, slot, metadata)
 	inv = Inventory(inv)
@@ -621,7 +624,7 @@ function Inventory.SetMetadata(inv, slot, metadata)
 end
 exports('SetMetadata', Inventory.SetMetadata)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param count number
 ---@param metadata? table | string
@@ -644,6 +647,7 @@ function Inventory.AddItem(inv, item, count, metadata, slot, cb)
 	if item then
 		if inv then
 			metadata, count = Items.Metadata(inv.id, item, metadata or {}, count)
+			---@type boolean?
 			local existing = false
 
 			if slot then
@@ -692,7 +696,7 @@ function Inventory.AddItem(inv, item, count, metadata, slot, cb)
 end
 exports('AddItem', Inventory.AddItem)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param search string|number slots|1, count|2
 ---@param items table | string
 ---@param metadata? table | string
@@ -745,7 +749,7 @@ function Inventory.Search(inv, search, items, metadata)
 end
 exports('Search', Inventory.Search)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param metadata? table
 function Inventory.GetItemSlots(inv, item, metadata)
@@ -767,7 +771,7 @@ function Inventory.GetItemSlots(inv, item, metadata)
 end
 exports('GetItemSlots', Inventory.GetItemSlots)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param count number
 ---@param metadata? table | string
@@ -827,7 +831,7 @@ function Inventory.RemoveItem(inv, item, count, metadata, slot)
 end
 exports('RemoveItem', Inventory.RemoveItem)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 ---@param count number
 ---@param metadata? table | string
@@ -854,7 +858,7 @@ function Inventory.CanCarryItem(inv, item, count, metadata)
 end
 exports('CanCarryItem', Inventory.CanCarryItem)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param item table | string
 function Inventory.CanCarryAmount(inv, item)
     if type(item) ~= 'table' then item = Items(item) end
@@ -867,7 +871,7 @@ function Inventory.CanCarryAmount(inv, item)
 end
 exports('CanCarryAmount', Inventory.CanCarryAmount)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param firstItem string
 ---@param firstItemCount number
 ---@param testItem string
@@ -876,7 +880,7 @@ function Inventory.CanSwapItem(inv, firstItem, firstItemCount, testItem, testIte
 	inv = Inventory(inv)
 	local firstItemData = Inventory.GetItem(inv, firstItem)
 	local testItemData = Inventory.GetItem(inv, testItem)
-	if firstItemData.count >= firstItemCount then
+	if firstItemData and testItemData and firstItemData.count >= firstItemCount then
 		local weightWithoutFirst = inv.weight - (firstItemData.weight * firstItemCount)
 		local weightWithTest = weightWithoutFirst + (testItemData.weight * testItemCount)
 		return weightWithTest <= inv.maxWeight
@@ -1022,7 +1026,7 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 								fromInventory.weight = fromWeight
 								toInventory.weight = toWeight
 
-								if container then
+								if containerItem then
 									local toContainer = toInventory.type == 'container'
 									local whitelist = Items.containers[containerItem.name]?.whitelist
 									local blacklist = Items.containers[containerItem.name]?.blacklist
@@ -1035,7 +1039,7 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 									Inventory.ContainerWeight(containerItem, toContainer and toWeight or fromWeight, playerInventory)
 								end
 
-								toData, fromData = Inventory.SwapSlots(fromInventory, toInventory, data.fromSlot, data.toSlot)
+								toData, fromData = Inventory.SwapSlots(fromInventory, toInventory, data.fromSlot, data.toSlot) --[[@as table]]
 
 								Log(('%sx %s transferred from %s to %s for %sx %s'):format(fromData.count, fromData.name, fromInventory.owner and fromInventory.label or fromInventory.id, toInventory.owner and toInventory.label or toInventory.id, toData.count, toData.name),
 									playerInventory.owner,
@@ -1120,7 +1124,7 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 						else return end
 					end
 
-					if fromData.count < 1 then fromData = nil end
+					if fromData and fromData.count < 1 then fromData = nil end
 
 					local items = {}
 
@@ -1211,7 +1215,7 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 						end
 					end
 
-					return container and containerItem.weight or true, resp, weaponSlot
+					return containerItem and containerItem.weight or true, resp, weaponSlot
 				end
 			end
 		end
@@ -1263,7 +1267,7 @@ function Inventory.Return(source)
 end
 exports('ReturnInventory', Inventory.Return)
 
----@param inv string | number
+---@param inv table | string | number
 ---@param keep? string | string[]
 --- todo: support the keep argument, allowing users to define a list of item "types" to keep
 --- i.e. {'money', 'weapons'} would keep money and weapons, but remove ammo, attachments, and other items

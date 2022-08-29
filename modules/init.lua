@@ -78,11 +78,11 @@ local function spamError(err)
 		while true do
 			Wait(2000)
 			CreateThread(function()
-				error(err)
+				error(err, 0)
 			end)
 		end
 	end)
-	error(err)
+	error(err, 0)
 end
 
 if shared.framework == 'ox' then
@@ -90,42 +90,45 @@ if shared.framework == 'ox' then
 	local import = LoadResourceFile('ox_core', file)
 	local func, err = load(import, ('@@ox_core/%s'):format(file))
 
-	if err then
+	if not func or err then
 		shared.ready = false
-		spamError(err)
+		return spamError(err)
 	end
 
 	func()
 end
 
+---@param name string
+---@return table
 function data(name)
 	if shared.server and shared.ready == nil then return {} end
 	local file = ('data/%s.lua'):format(name)
 	local datafile = LoadResourceFile(shared.resource, file)
 	local func, err = load(datafile, ('@@ox_inventory/%s'):format(file))
 
-	if err then
+	if not func or err then
 		shared.ready = false
-		spamError(err)
+		---@diagnostic disable-next-line: return-type-mismatch
+		return spamError(err)
 	end
 
 	return func()
 end
 
 if not lib then
-	spamError('ox_inventory requires the ox_lib resource, refer to the documentation.')
+	return spamError('ox_inventory requires the ox_lib resource, refer to the documentation.')
 end
 
 local success, msg = lib.checkDependency('oxmysql', '2.4.0')
 
-if not success then spamError(msg) end
+if not success then return spamError(msg) end
 
 success, msg = lib.checkDependency('ox_lib', '2.9.0')
 
 if not success then spamError(msg) end
 
 if not LoadResourceFile(shared.resource, 'web/build/index.html') then
-	spamError('UI has not been built, refer to the documentation or download a release build.\n	^3https://overextended.github.io/docs/ox_inventory/^0')
+	return spamError('UI has not been built, refer to the documentation or download a release build.\n	^3https://overextended.github.io/docs/ox_inventory/^0')
 end
 
 -- Disable qtarget compatibility if it isn't running
@@ -137,8 +140,14 @@ end
 if shared.server then shared.ready = false end
 
 local Locales = data('locales/'..shared.locale)
-function shared.locale(string, ...)
-	if not string then return Locales end
-	if Locales[string] then return Locales[string]:format(...) end
-	return string
+
+---@param str any
+---@param ... unknown
+---@return string
+function shared.locale(str, ...)
+	---@diagnostic disable-next-line: return-type-mismatch
+	if not str then return Locales end
+
+	str = Locales[str]
+	return str and str:format(...)
 end
