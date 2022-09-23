@@ -204,12 +204,12 @@ end)
 lib.callback.register('ox_inventory:useItem', function(source, itemName, slot, metadata)
 	local inventory = Inventory(source)
 	if inventory.type == 'player' then
-		local item, type = Items(itemName)
+		local item = Items(itemName)
 		local data = item and (slot and inventory.items[slot] or Inventory.GetItem(source, item, metadata))
 
 		if not data then return end
 
-		local durability = type ~= 1 and data.metadata?.durability
+		local durability = data.metadata?.durability
 
 		if durability then
 			if durability > 100 then
@@ -271,8 +271,8 @@ local function conversionScript()
 	shared.ready = false
 
 	local file = 'setup/convert.lua'
-	local import = LoadResourceFile('ox_inventory', file)
-	local func = load(import, ('@@ox_inventory/%s'):format(file)) --[[@as function]]
+	local import = LoadResourceFile(shared.resource, file)
+	local func = load(import, ('@@%s/%s'):format(shared.resource, file)) --[[@as function]]
 
 	conversionScript = func()
 end

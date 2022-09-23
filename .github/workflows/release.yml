@@ -21,9 +21,9 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2.0.1
+        uses: pnpm/action-setup@v2.2.2
         with:
-          version: 6.20.3
+          version: 7.11.0
 
       - name: Get variables
         id: get_vars
@@ -74,6 +74,7 @@ jobs:
           cp ./{server.lua,README.md,LICENSE,fxmanifest.lua,client.lua} ./temp/ox_inventory
           cp -r ./{setup,modules,data} ./temp/ox_inventory
           cp -r ./web/build ./temp/ox_inventory/web/build
+          cp -r ./web/images ./temp/ox_inventory/web/images
           cd ./temp && zip -r ../ox_inventory.zip ./ox_inventory
 
       - name: Create Release

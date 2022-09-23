@@ -18,7 +18,7 @@ exports('setStashTarget', function(id, owner)
 	StashTarget = id and {id=id, owner=owner}
 end)
 
----@type boolean?
+---@type boolean | number | nil
 local invBusy = true
 
 ---@type boolean?
@@ -155,14 +155,14 @@ exports('openInventory', client.openInventory)
 local Animations = data 'animations'
 
 ---@param data table
----@param cb function
+---@param cb function?
 local function useItem(data, cb)
 	if invOpen and data.close then client.closeInventory() end
 
 	if not invBusy and not PlayerData.dead and not lib.progressActive() and not IsPedRagdoll(cache.ped) and not IsPedFalling(cache.ped) then
 		if currentWeapon and currentWeapon?.timer > 100 then return end
 
-		invBusy = true
+		invBusy = 1
 		local result = lib.callback.await('ox_inventory:useItem', 200, data.name, data.slot, PlayerData.inventory[data.slot].metadata)
 
 		if not result then
@@ -397,7 +397,10 @@ local table = lib.table
 local Shops = client.shops
 local Inventory = client.inventory
 
+---@todo remove or replace when the bridge module gets restructured
 function OnPlayerData(key, val)
+	if key ~= 'groups' and key ~= 'ped' and key ~= 'dead' then return end
+
 	if key == 'groups' then
 		Inventory.Stashes()
 		Inventory.Evidence()
@@ -414,7 +417,6 @@ end
 if not Utils or not Weapon or not Items or not Shops or not Inventory then return end
 
 local function registerCommands()
-
 	RegisterCommand('inv', function()
 		if not invOpen then
 			local closest = lib.points.closest()
@@ -528,7 +530,7 @@ local function registerCommands()
 
 							if closeToVehicle then
 								local plate = client.trimplate and string.strtrim(GetVehicleNumberPlateText(vehicle)) or GetVehicleNumberPlateText(vehicle)
-								TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z)
+								TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z, 0)
 								lastVehicle = vehicle
 								client.openInventory('trunk', {id='trunk'..plate, class = vehicleClass, model = vehicleHash, netid = NetworkGetNetworkIdFromEntity(vehicle)})
 								local timeout = 20
@@ -555,7 +557,7 @@ local function registerCommands()
 
 										if #(GetEntityCoords(cache.ped) - position) >= 2 or not DoesEntityExist(vehicle) then
 											break
-										else TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z) end
+										else TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z, 0) end
 									else break end
 								end
 
@@ -726,7 +728,7 @@ RegisterNetEvent('ox_inventory:updateSlots', function(items, weights, count, rem
 			item = PlayerData.inventory[item.slot]
 		end
 
-		Utils.ItemNotify({item.metadata?.label or item.label, item.metadata?.image or item.name, shared.locale(removed and 'removed' or 'added', count)})
+		Utils.ItemNotify({item.metadata?.label or item.label, item.metadata?.image or item.name, removed and 'ui_removed' or 'ui_added', count})
 	end
 
 	updateInventory(items, weights)
@@ -824,13 +826,9 @@ end)
 
 lib.onCache('seat', function(seat)
 	if seat then
-		Utils.WeaponWheel(true)
-
-		return SetTimeout(50, function()
-			if not DoesVehicleHaveWeapons(cache.vehicle) then
-				Utils.WeaponWheel(false)
-			end
-		end)
+		if DoesVehicleHaveWeapons(cache.vehicle) then
+			return Utils.WeaponWheel(true)
+		end
 	end
 
 	Utils.WeaponWheel(false)
@@ -852,7 +850,11 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	if setStateBagHandler then setStateBagHandler(('player:%s'):format(source)) end
 
 	for _, data in pairs(inventory) do
-		Items[data.name].count += data.count
+		local item = Items[data.name]
+
+		if item then
+			item.count += data.count
+		end
 	end
 
 	local phone = Items.phone
@@ -920,7 +922,8 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 				slots = shared.playerslots,
 				items = PlayerData.inventory,
 				maxWeight = shared.playerweight,
-			}
+			},
+			imagepath = GetConvar('inventory:imagepath', 'nui://ox_inventory/web/images')
 		}
 	})
 
@@ -932,7 +935,6 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	registerCommands()
 	TriggerEvent('ox_inventory:updateInventory', PlayerData.inventory)
 	lib.notify({ description = shared.locale('inventory_setup') })
-	Utils.WeaponWheel(false)
 
 	local function nearbyLicense(self)
 		---@diagnostic disable-next-line: param-type-mismatch
@@ -1004,7 +1006,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 			currentWeapon = Weapon.Disarm(currentWeapon, true)
 
 			if weaponHash == `WEAPON_HANDCUFFS` or weaponHash == `WEAPON_GARBAGEBAG` or weaponHash == `WEAPON_BRIEFCASE` or weaponHash == `WEAPON_BRIEFCASE_02` then
-				SetCurrentPedWeapon(cache.ped, weaponHash, true)
+				SetCurrentPedWeapon(cache.ped, weaponHash --[[@as number]], true)
 			end
 		end
 
@@ -1041,9 +1043,10 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 				EnableControlAction(0, 31, true)
 			end
 		else
+			local playerPed = cache.ped
 			disableControls()
 
-			if invBusy then
+			if invBusy == 1 or IsPedCuffed(playerPed) then
 				DisablePlayerFiring(playerId, true)
 			end
 
@@ -1061,8 +1064,6 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 				elseif client.aimedfiring and not currentWeapon.melee and not IsPlayerFreeAiming(playerId) then
 					DisablePlayerFiring(playerId, true)
 				end
-
-				local playerPed = cache.ped
 
 				if not invBusy and currentWeapon.timer ~= 0 and currentWeapon.timer < GetGameTimer() then
 					currentWeapon.timer = 0
@@ -1185,7 +1186,7 @@ RegisterNUICallback('removeComponent', function(data, cb)
 end)
 
 RegisterNUICallback('useItem', function(slot, cb)
-	useSlot(slot)
+	useSlot(slot --[[@as number]])
 	cb(1)
 end)
 
@@ -1221,7 +1222,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 		local seats = GetVehicleMaxNumberOfPassengers(cache.vehicle) - 1
 
 		if seats >= 0 then
-			local passenger = GetPedInVehicleSeat(cache.seat - 2 * (cache.seat % 2) + 1)
+			local passenger = GetPedInVehicleSeat(cache.vehicle, cache.seat - 2 * (cache.seat % 2) + 1)
 
 			if passenger ~= 0 then
 				target = GetPlayerServerId(NetworkGetPlayerIndexFromPed(passenger))
@@ -1267,13 +1268,18 @@ RegisterNUICallback('swapItems', function(data, cb)
 
 	local success, response, weaponSlot = lib.callback.await('ox_inventory:swapItems', false, data)
 
-	if response then
-		updateInventory(response.items, response.weight)
-	end
+	if success then
+		if response then
+			updateInventory(response.items, response.weight)
 
-	if weaponSlot and currentWeapon then
-		currentWeapon.slot = weaponSlot
-		TriggerEvent('ox_inventory:currentWeapon', currentWeapon)
+			if weaponSlot and currentWeapon then
+				currentWeapon.slot = weaponSlot
+				TriggerEvent('ox_inventory:currentWeapon', currentWeapon)
+			end
+
+		end
+	elseif response then
+		lib.notify({ type = 'error', description = shared.locale(response) })
 	end
 
 	if data.toType == 'newdrop' then
