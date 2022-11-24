@@ -23,8 +23,14 @@ local invBusy = true
 
 ---@type boolean?
 local invOpen = false
-
 local plyState = LocalPlayer.state
+local IsPedCuffed = IsPedCuffed
+local playerPed = cache.ped
+
+lib.onCache('ped', function(ped)
+	playerPed = ped
+	Utils.WeaponWheel()
+end)
 
 plyState:set('invBusy', true, false)
 
@@ -34,9 +40,9 @@ local function canOpenInventory()
 	and not PlayerData.dead
 	and invOpen ~= nil
 	and (not currentWeapon or currentWeapon.timer == 0)
-	and not IsPedCuffed(cache.ped)
+	and not IsPedCuffed(playerPed)
 	and not IsPauseMenuActive()
-	and not IsPedFatallyInjured(cache.ped)
+	and not IsPedFatallyInjured(playerPed)
 end
 
 local defaultInventory = {
@@ -50,13 +56,22 @@ local currentInventory = defaultInventory
 
 local function closeTrunk()
 	if currentInventory?.type == 'trunk' then
-		local coords = GetEntityCoords(cache.ped, true)
-		Utils.PlayAnimAdvanced(900, 'anim@heists@fleeca_bank@scope_out@return_case', 'trevor_action', coords.x, coords.y, coords.z, 0.0, 0.0, GetEntityHeading(cache.ped), 2.0, 2.0, 1000, 49, 0.25)
+		local coords = GetEntityCoords(playerPed, true)
+		---@todo animation for vans?
+		Utils.PlayAnimAdvanced(900, 'anim@heists@fleeca_bank@scope_out@return_case', 'trevor_action', coords.x, coords.y, coords.z, 0.0, 0.0, GetEntityHeading(playerPed), 2.0, 2.0, 1000, 49, 0.25)
+
 		CreateThread(function()
 			local entity = currentInventory.entity
 			local door = currentInventory.door
 			Wait(900)
-			SetVehicleDoorShut(entity, door, false)
+
+			if type(door) == 'table' then
+				for i = 1, #door do
+					SetVehicleDoorShut(entity, door[i], false)
+				end
+			else
+				SetVehicleDoorShut(entity, door, false)
+			end
 		end)
 	end
 end
@@ -83,29 +98,58 @@ function client.openInventory(inv, data)
 				return client.closeInventory()
 			end
 		end
+	elseif IsNuiFocused() then
+		-- If triggering event from another nui such as qtarget, may need to wait for focus to end
+		Wait(100)
+
+		if IsNuiFocused() then return end
 	end
 
 	if inv == 'dumpster' and cache.vehicle then
-		return lib.notify({ type = 'error', description = shared.locale('inventory_right_access') })
+		return lib.notify({ type = 'error', description = locale('inventory_right_access') })
 	end
 
 	if canOpenInventory() then
 		local left, right
 
 		if inv == 'shop' and invOpen == false then
+			if cache.vehicle then
+				return lib.notify({ type = 'error', description = locale('cannot_perform') })
+			end
+
 			left, right = lib.callback.await('ox_inventory:openShop', 200, data)
+		elseif inv == 'crafting' then
+			if cache.vehicle then
+				return lib.notify({ type = 'error', description = locale('cannot_perform') })
+			end
+
+			left = lib.callback.await('ox_inventory:openCraftingBench', 200, data.id, data.index)
+
+			if left then
+				right = client.craftingBenches[data.id]
+				right = {
+					type = 'crafting',
+					id = data.id,
+					label = data.label or locale('crafting_bench'),
+					index = data.index,
+					slots = right.slots,
+					items = right.items,
+					coords = shared.target and right.zones[data.index].coords or right.points[data.index]
+				}
+			end
 		elseif invOpen ~= nil then
 			if inv == 'policeevidence' then
-				local input = lib.inputDialog(shared.locale('police_evidence'), {shared.locale('locker_number')})
+				local input = lib.inputDialog(locale('police_evidence'), {locale('locker_number')})
 
 				if input then
+					---@diagnostic disable-next-line: cast-local-type
 					input = tonumber(input[1])
 				else
-					return lib.notify({ description = shared.locale('locker_no_value'), type = 'error' })
+					return lib.notify({ description = locale('locker_no_value'), type = 'error' })
 				end
 
 				if type(input) ~= 'number' then
-					return lib.notify({ description = shared.locale('locker_must_number'), type = 'error' })
+					return lib.notify({ description = locale('locker_must_number'), type = 'error' })
 				else
 					data = input
 				end
@@ -136,7 +180,7 @@ function client.openInventory(inv, data)
 			})
 
 			if not currentInventory.coords and not inv == 'container' then
-				currentInventory.coords = GetEntityCoords(cache.ped)
+				currentInventory.coords = GetEntityCoords(playerPed)
 			end
 
 			-- Stash exists (useful for custom stashes)
@@ -144,10 +188,10 @@ function client.openInventory(inv, data)
 		else
 			-- Stash does not exist
 			if left == false then return false end
-			if invOpen == false then lib.notify({ type = 'error', description = shared.locale('inventory_right_access') }) end
+			if invOpen == false then lib.notify({ type = 'error', description = locale('inventory_right_access') }) end
 			if invOpen then client.closeInventory() end
 		end
-	elseif invBusy then lib.notify({ type = 'error', description = shared.locale('inventory_player_access') }) end
+	elseif invBusy then lib.notify({ type = 'error', description = locale('inventory_player_access') }) end
 end
 RegisterNetEvent('ox_inventory:openInventory', client.openInventory)
 exports('openInventory', client.openInventory)
@@ -158,12 +202,13 @@ local Animations = data 'animations'
 ---@param cb function?
 local function useItem(data, cb)
 	if invOpen and data.close then client.closeInventory() end
+	local result
 
-	if not invBusy and not PlayerData.dead and not lib.progressActive() and not IsPedRagdoll(cache.ped) and not IsPedFalling(cache.ped) then
+	if not invBusy and not PlayerData.dead and not lib.progressActive() and not IsPedRagdoll(playerPed) and not IsPedFalling(playerPed) then
 		if currentWeapon and currentWeapon?.timer > 100 then return end
 
 		invBusy = 1
-		local result = lib.callback.await('ox_inventory:useItem', 200, data.name, data.slot, PlayerData.inventory[data.slot].metadata)
+		result = lib.callback.await('ox_inventory:useItem', 200, data.name, data.slot, PlayerData.inventory[data.slot].metadata)
 
 		if not result then
 			Wait(500)
@@ -197,7 +242,7 @@ local function useItem(data, cb)
 
 			local success = (not data.usetime or lib.progressBar({
 				duration = data.usetime,
-				label = data.label or shared.locale('using', result.label),
+				label = data.label or locale('using', result.label),
 				useWhileDead = data.useWhileDead,
 				canCancel = data.cancel,
 				disable = data.disable,
@@ -217,15 +262,18 @@ local function useItem(data, cb)
 				if data.notification then
 					lib.notify({ description = data.notification })
 				end
-
-				if cb then cb(result) end
-				Wait(200)
-				plyState.invBusy = false
-				return
 			end
 		end
 	end
-	if cb then cb(false) end
+
+	if cb then
+		local success, response = pcall(cb, result or false)
+
+		if not success and response then
+			print(('^1An error occurred while calling item "%s" callback!\n^1SCRIPT ERROR: %s^0'):format(result.name, response))
+		end
+	end
+
 	Wait(200)
 	plyState.invBusy = false
 end
@@ -241,11 +289,11 @@ local function useSlot(slot)
 		local item = PlayerData.inventory[slot]
 		if not item then return end
 
-		local data = item and Items[item.name]
+		local data = Items[item.name]
 		if not data then return end
 
 		if data.component and not currentWeapon then
-			return lib.notify({ type = 'error', description = shared.locale('weapon_hand_required') })
+			return lib.notify({ type = 'error', description = locale('weapon_hand_required') })
 		end
 
 		data.slot = slot
@@ -277,7 +325,6 @@ local function useSlot(slot)
 				end
 			end)
 		elseif currentWeapon then
-			local playerPed = cache.ped
 			if data.ammo then
 				if EnableWeaponWheel or currentWeapon.metadata.durability <= 0 then return end
 				local maxAmmo = GetMaxAmmoInClip(playerPed, currentWeapon.hash, true)
@@ -322,7 +369,7 @@ local function useSlot(slot)
 				for componentIndex = 1, #weaponComponents do
 					if componentType == Items[weaponComponents[componentIndex]].type then
 						-- todo: Update locale?
-						return lib.notify({ type = 'error', description = shared.locale('component_has', data.label) })
+						return lib.notify({ type = 'error', description = locale('component_has', data.label) })
 					end
 				end
 				for i = 1, #components do
@@ -330,7 +377,7 @@ local function useSlot(slot)
 
 					if DoesWeaponTakeWeaponComponent(currentWeapon.hash, component) then
 						if HasPedGotWeaponComponent(playerPed, currentWeapon.hash, component) then
-							lib.notify({ type = 'error', description = shared.locale('component_has', data.label) })
+							lib.notify({ type = 'error', description = locale('component_has', data.label) })
 						else
 							useItem(data, function(data)
 								if data then
@@ -343,7 +390,7 @@ local function useSlot(slot)
 						return
 					end
 				end
-				lib.notify({ type = 'error', description = shared.locale('component_invalid', data.label) })
+				lib.notify({ type = 'error', description = locale('component_invalid', data.label) })
 			elseif data.allowArmed then
 				useItem(data)
 			end
@@ -360,9 +407,12 @@ local function useButton(id, slot)
 	if PlayerData.loaded and not invBusy and not lib.progressActive() then
 		local item = PlayerData.inventory[slot]
 		if not item then return end
-		local data = item and Items[item.name]
-		if data.buttons and data.buttons[id]?.action then
-			data.buttons[id].action(slot)
+
+		local data = Items[item.name]
+		local buttons = data?.buttons
+
+		if buttons and buttons[id]?.action then
+			buttons[id].action(slot)
 		end
 	end
 end
@@ -417,204 +467,229 @@ end
 if not Utils or not Weapon or not Items or not Shops or not Inventory then return end
 
 local function registerCommands()
-	RegisterCommand('inv', function()
-		if not invOpen then
-			local closest = lib.points.closest()
-
-			if closest and closest.currentDistance < 1.2 then
-				if closest.inv ~= 'license' and closest.inv ~= 'policeevidence' then
-					return client.openInventory(closest.inv or 'drop', { id = closest.invId, type = closest.type })
-				end
-			end
-		end
-
-		client.openInventory()
-	end, false)
-	RegisterKeyMapping('inv', shared.locale('open_player_inventory'), 'keyboard', client.keys[1])
-	TriggerEvent('chat:removeSuggestion', '/inv')
-
-	local Vehicles = data 'vehicles'
-
-	RegisterCommand('inv2', function()
-		if IsNuiFocused() then
-			return invOpen and client.closeInventory()
-		end
-
-		if not invOpen then
-			if invBusy then
-				return lib.notify({ type = 'error', description = shared.locale('inventory_player_access') })
-			else
-				if not canOpenInventory() then
-					return lib.notify({ type = 'error', description = shared.locale('inventory_player_access') })
-				end
-
-				if StashTarget then
-					client.openInventory('stash', StashTarget)
-				elseif cache.vehicle then
-					-- Player is still entering vehicle, so bailout
-					if not IsPedInAnyVehicle(cache.ped, false) then return end
-
-					local vehicle = cache.vehicle
-
-					if NetworkGetEntityIsNetworked(vehicle) then
-						local vehicleHash = GetEntityModel(vehicle)
-						local vehicleClass = GetVehicleClass(vehicle)
-						local checkVehicle = Vehicles.Storage[vehicleHash]
-						-- No storage or no glovebox
-						if (checkVehicle == 0 or checkVehicle == 2) or (not Vehicles.glovebox[vehicleClass] and not Vehicles.glovebox.models[vehicleHash]) then return end
-
-						local plate = client.trimplate and string.strtrim(GetVehicleNumberPlateText(vehicle)) or GetVehicleNumberPlateText(vehicle)
-						client.openInventory('glovebox', {id = 'glove'..plate, class = vehicleClass, model = vehicleHash, netid = NetworkGetNetworkIdFromEntity(vehicle) })
-
-						while true do
-							Wait(100)
-							if not invOpen then break
-							elseif not cache.vehicle then
-								client.closeInventory()
-								break
-							end
-						end
-					end
-				else
-					local entity, type = Utils.Raycast()
-					if not entity then return end
-					local vehicle, position
-
-					if not shared.qtarget then
-						if type == 2 then vehicle, position = entity, GetEntityCoords(entity)
-						elseif type == 3 and table.contains(Inventory.Dumpsters, GetEntityModel(entity)) then
-							local netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity)
-
-							if not netId then
-								NetworkRegisterEntityAsNetworked(entity)
-								netId = NetworkGetNetworkIdFromEntity(entity)
-								NetworkUseHighPrecisionBlending(netId, false)
-								SetNetworkIdExistsOnAllMachines(netId, true)
-								SetNetworkIdCanMigrate(netId, true)
-							end
-
-							return client.openInventory('dumpster', 'dumpster'..netId)
-						end
-					elseif type == 2 then
-						vehicle, position = entity, GetEntityCoords(entity)
-					else return end
-
-					if not vehicle then return end
-
-					local lastVehicle
-					local vehicleHash = GetEntityModel(vehicle)
-					local vehicleClass = GetVehicleClass(vehicle)
-					local checkVehicle = Vehicles.Storage[vehicleHash]
-					-- No storage or no glovebox
-					if (checkVehicle == 0 or checkVehicle == 1) or (not Vehicles.trunk[vehicleClass] and not Vehicles.trunk.models[vehicleHash]) then return end
-
-					if #(playerCoords - position) < 6 and NetworkGetEntityIsNetworked(vehicle) then
-						local locked = GetVehicleDoorLockStatus(vehicle)
-
-						if locked == 0 or locked == 1 then
-							local open, vehBone
-
-							if checkVehicle == nil then -- No data, normal trunk
-								open, vehBone = 5, GetEntityBoneIndexByName(vehicle, 'boot')
-							elseif checkVehicle == 3 then -- Trunk in hood
-								open, vehBone = 4, GetEntityBoneIndexByName(vehicle, 'bonnet')
-							else -- No storage or no trunk
-								return
-							end
-
-							if vehBone == -1 then vehBone = GetEntityBoneIndexByName(vehicle, Vehicles.trunk.boneIndex[vehicleHash] or 'platelight') end
-
-							position = GetWorldPositionOfEntityBone(vehicle, vehBone)
-							local distance = #(playerCoords - position)
-							local closeToVehicle = distance < 2 and (open == 5 and (checkVehicle == nil and true or 2) or open == 4)
-
-							if closeToVehicle then
-								local plate = client.trimplate and string.strtrim(GetVehicleNumberPlateText(vehicle)) or GetVehicleNumberPlateText(vehicle)
-								TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z, 0)
-								lastVehicle = vehicle
-								client.openInventory('trunk', {id='trunk'..plate, class = vehicleClass, model = vehicleHash, netid = NetworkGetNetworkIdFromEntity(vehicle)})
-								local timeout = 20
-								repeat Wait(50)
-									timeout -= 1
-								until (currentInventory and currentInventory.type == 'trunk') or timeout == 0
-
-								if timeout == 0 then
-									closeToVehicle, lastVehicle = false, nil
-									return
-								end
-
-								SetVehicleDoorOpen(vehicle, open, false, false)
-								Wait(200)
-								Utils.PlayAnim(0, 'anim@heists@prison_heiststation@cop_reactions', 'cop_b_idle', 3.0, 3.0, -1, 49, 0.0, 0, 0, 0)
-								currentInventory.entity = lastVehicle
-								currentInventory.door = open
-
-								while true do
-									Wait(50)
-
-									if closeToVehicle and invOpen then
-										position = GetWorldPositionOfEntityBone(vehicle, vehBone)
-
-										if #(GetEntityCoords(cache.ped) - position) >= 2 or not DoesEntityExist(vehicle) then
-											break
-										else TaskTurnPedToFaceCoord(cache.ped, position.x, position.y, position.z, 0) end
-									else break end
-								end
-
-								if lastVehicle then client.closeInventory() end
-							end
-						else lib.notify({ type = 'error', description = shared.locale('vehicle_locked') }) end
-					end
-				end
-			end
-		else return client.closeInventory()
-		end
-	end, false)
-	RegisterKeyMapping('inv2', shared.locale('open_secondary_inventory'), 'keyboard', client.keys[2])
-	TriggerEvent('chat:removeSuggestion', '/inv2')
-
-	RegisterCommand('reload', function()
-		if currentWeapon?.ammo then
-			if currentWeapon.metadata.durability > 0 then
-				local ammo = Inventory.Search(1, currentWeapon.ammo)
-
-				if ammo and ammo[1] then
-					useSlot(ammo[1].slot)
-				end
-			else
-				lib.notify({ type = 'error', description = shared.locale('no_durability', currentWeapon.label) })
-			end
-		end
-	end, false)
-	RegisterKeyMapping('reload', shared.locale('reload_weapon'), 'keyboard', 'r')
-	TriggerEvent('chat:removeSuggestion', '/reload')
-
-	RegisterCommand('hotbar', function()
-		if not EnableWeaponWheel and not IsPauseMenuActive() and not IsNuiFocused() then
-			SendNUIMessage({ action = 'toggleHotbar' })
-		end
-	end, false)
-	RegisterKeyMapping('hotbar', shared.locale('disable_hotbar'), 'keyboard', client.keys[3])
-	TriggerEvent('chat:removeSuggestion', '/hotbar')
-
 	RegisterCommand('steal', function()
 		openNearbyInventory()
 	end, false)
 
-	for i = 1, 5 do
-		local hotkey = ('hotkey%s'):format(i)
-
-		RegisterCommand(hotkey, function()
+	lib.addKeybind({
+		name = 'inv',
+		description = locale('open_player_inventory'),
+		defaultKey = client.keys[1],
+		onPressed = function()
 			if not invOpen then
-				CreateThread(function() useSlot(i) end)
+				local closest = lib.points.closest()
+
+				if closest and closest.currentDistance < 1.2 then
+					if closest.inv == 'crafting' then
+						return client.openInventory('crafting', { id = closest.id, index = closest.index })
+					elseif closest.inv ~= 'license' and closest.inv ~= 'policeevidence' then
+						return client.openInventory(closest.inv or 'drop', { id = closest.invId, type = closest.type })
+					end
+				end
+
+				return client.openInventory()
 			end
-		end, false)
 
-		---@diagnostic disable-next-line: param-type-mismatch
-		RegisterKeyMapping(hotkey, shared.locale('use_hotbar', i), 'keyboard', i)
-		TriggerEvent('chat:removeSuggestion', '/'..hotkey)
+			client.closeInventory()
+		end
+	})
+
+	local Vehicles = data 'vehicles'
+
+	lib.addKeybind({
+		name = 'inv2',
+		description = locale('open_secondary_inventory'),
+		defaultKey = client.keys[2],
+		onPressed = function()
+			if invOpen then
+				return client.closeInventory()
+			end
+
+			if invBusy then
+				return lib.notify({ type = 'error', description = locale('inventory_player_access') })
+			end
+
+			if not canOpenInventory() then
+				return lib.notify({ type = 'error', description = locale('inventory_player_access') })
+			end
+
+			if StashTarget then
+				client.openInventory('stash', StashTarget)
+			elseif cache.vehicle then
+				-- Player is still entering vehicle, so bailout
+				if not IsPedInAnyVehicle(playerPed, false) then return end
+
+				local vehicle = cache.vehicle
+
+				if NetworkGetEntityIsNetworked(vehicle) then
+					local vehicleHash = GetEntityModel(vehicle)
+					local vehicleClass = GetVehicleClass(vehicle)
+					local checkVehicle = Vehicles.Storage[vehicleHash]
+					-- No storage or no glovebox
+					if (checkVehicle == 0 or checkVehicle == 2) or (not Vehicles.glovebox[vehicleClass] and not Vehicles.glovebox.models[vehicleHash]) then return end
+
+					local plate = GetVehicleNumberPlateText(vehicle)
+					client.openInventory('glovebox', {id = 'glove'..plate, netid = NetworkGetNetworkIdFromEntity(vehicle) })
+
+					while true do
+						Wait(100)
+						if not invOpen then break
+						elseif not cache.vehicle then
+							client.closeInventory()
+							break
+						end
+					end
+				end
+			else
+				local entity, entityType = Utils.Raycast()
+				if not entity then return end
+				local vehicle, position
+
+				if not shared.target then
+					if entityType == 2 then vehicle, position = entity, GetEntityCoords(entity)
+					elseif entityType == 3 and table.contains(Inventory.Dumpsters, GetEntityModel(entity)) then
+						local netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity)
+
+						if not netId then
+							NetworkRegisterEntityAsNetworked(entity)
+							netId = NetworkGetNetworkIdFromEntity(entity)
+							NetworkUseHighPrecisionBlending(netId, false)
+							SetNetworkIdExistsOnAllMachines(netId, true)
+							SetNetworkIdCanMigrate(netId, true)
+						end
+
+						return client.openInventory('dumpster', 'dumpster'..netId)
+					end
+				elseif entityType == 2 then
+					vehicle, position = entity, GetEntityCoords(entity)
+				else return end
+
+				if not vehicle then return end
+
+				local lastVehicle
+				local vehicleHash = GetEntityModel(vehicle)
+				local vehicleClass = GetVehicleClass(vehicle)
+				local checkVehicle = Vehicles.Storage[vehicleHash]
+				-- No storage or no glovebox
+				if (checkVehicle == 0 or checkVehicle == 1) or (not Vehicles.trunk[vehicleClass] and not Vehicles.trunk.models[vehicleHash]) then return end
+
+				if #(playerCoords - position) < 6 and NetworkGetEntityIsNetworked(vehicle) then
+					local locked = GetVehicleDoorLockStatus(vehicle)
+
+					if locked == 0 or locked == 1 then
+						local open, vehBone
+
+						if checkVehicle == nil then -- No data, normal trunk
+							open, vehBone = 5, GetEntityBoneIndexByName(vehicle, 'boot')
+						elseif checkVehicle == 3 then -- Trunk in hood
+							open, vehBone = 4, GetEntityBoneIndexByName(vehicle, 'bonnet')
+						else -- No storage or no trunk
+							return
+						end
+
+						if vehBone == -1 then
+							if vehicleClass == 12 then
+								open = { 2, 3 }
+							end
+
+							vehBone = GetEntityBoneIndexByName(vehicle, Vehicles.trunk.boneIndex[vehicleHash] or 'platelight')
+						end
+
+						position = GetWorldPositionOfEntityBone(vehicle, vehBone)
+						local distance = #(playerCoords - position)
+						local closeToVehicle = distance < 2 and open
+
+						if closeToVehicle then
+							local plate = GetVehicleNumberPlateText(vehicle)
+							TaskTurnPedToFaceCoord(playerPed, position.x, position.y, position.z, 0)
+							lastVehicle = vehicle
+							client.openInventory('trunk', {id='trunk'..plate, netid = NetworkGetNetworkIdFromEntity(vehicle)})
+							local timeout = 20
+							repeat Wait(50)
+								timeout -= 1
+							until (currentInventory and currentInventory.type == 'trunk') or timeout == 0
+
+							if timeout == 0 then
+								closeToVehicle, lastVehicle = false, nil
+								return
+							end
+
+							if type(open) == 'table' then
+								for i = 1, #open do
+									SetVehicleDoorOpen(vehicle, open[i], false, false)
+								end
+							else
+								SetVehicleDoorOpen(vehicle, open, false, false)
+							end
+
+							Wait(200)
+							---@todo animation for vans?
+							Utils.PlayAnim(0, 'anim@heists@prison_heiststation@cop_reactions', 'cop_b_idle', 3.0, 3.0, -1, 49, 0.0, 0, 0, 0)
+							currentInventory.entity = lastVehicle
+							currentInventory.door = open
+
+							while true do
+								Wait(50)
+
+								if closeToVehicle and invOpen then
+									position = GetWorldPositionOfEntityBone(vehicle, vehBone)
+
+									if #(GetEntityCoords(playerPed) - position) >= 2 or not DoesEntityExist(vehicle) then
+										break
+									else TaskTurnPedToFaceCoord(playerPed, position.x, position.y, position.z, 0) end
+								else break end
+							end
+
+							if lastVehicle then client.closeInventory() end
+						end
+					else lib.notify({ type = 'error', description = locale('vehicle_locked') }) end
+				end
+			end
+		end
+	})
+
+	lib.addKeybind({
+		name = 'reloadweapon',
+		description = locale('reload_weapon'),
+		defaultKey = 'r',
+		onPressed = function(self)
+			if not currentWeapon then return end
+
+			if currentWeapon.ammo then
+				if currentWeapon.metadata.durability > 0 then
+					local ammo = Inventory.Search(1, currentWeapon.ammo)?[1]
+
+					if ammo then
+						useSlot(ammo.slot)
+					end
+				else
+					lib.notify({ type = 'error', description = locale('no_durability', currentWeapon.label) })
+				end
+			end
+		end
+	})
+
+	lib.addKeybind({
+		name = 'hotbar',
+		description = locale('disable_hotbar'),
+		defaultKey = client.keys[3],
+		onPressed = function()
+			if EnableWeaponWheel or IsNuiFocused() or lib.progressActive() then return end
+			SendNUIMessage({ action = 'toggleHotbar' })
+		end
+	})
+
+	for i = 1, 5 do
+		lib.addKeybind({
+			name = ('hotkey%s'):format(i),
+			description = locale('use_hotbar', i),
+			defaultKey = tostring(i),
+			onPressed = function()
+				if invOpen or IsNuiFocused() then return end
+				useSlot(i)
+			end
+		})
 	end
-
 end
 
 function client.closeInventory(server)
@@ -631,6 +706,8 @@ function client.closeInventory(server)
 		SendNUIMessage({ action = 'closeInventory' })
 		SetInterval(client.interval, 200)
 		Wait(200)
+
+		if invOpen ~= nil then return end
 
 		if not server and currentInventory then
 			TriggerServerEvent('ox_inventory:closeInventory')
@@ -664,6 +741,7 @@ local function updateInventory(items, weight)
 			PlayerData.inventory[slot] = v and v or nil
 			changes[slot] = v
 		end
+		SendNUIMessage({ action = 'refreshSlots', data = {itemCount = itemCount} })
 		client.setPlayerData('weight', weight)
 	else
 		for i = 1, #items do
@@ -682,9 +760,10 @@ local function updateInventory(items, weight)
 			if not v.count then v.name = nil end
 			PlayerData.inventory[v.slot] = v.name and v or nil
 		end
+		SendNUIMessage({ action = 'refreshSlots', data = {items = items, itemCount = itemCount} })
 		client.setPlayerData('weight', weight.left)
-		SendNUIMessage({ action = 'refreshSlots', data = items })
 	end
+
 
 	for item, count in pairs(itemCount) do
 		local data = Items[item]
@@ -735,7 +814,7 @@ RegisterNetEvent('ox_inventory:updateSlots', function(items, weights, count, rem
 end)
 
 RegisterNetEvent('ox_inventory:inventoryReturned', function(data)
-	lib.notify({ description = shared.locale('items_returned') })
+	lib.notify({ description = locale('items_returned') })
 	if currentWeapon then currentWeapon = Weapon.Disarm(currentWeapon) end
 	client.closeInventory()
 	PlayerData.inventory = data[1]
@@ -744,17 +823,19 @@ RegisterNetEvent('ox_inventory:inventoryReturned', function(data)
 end)
 
 RegisterNetEvent('ox_inventory:inventoryConfiscated', function(message)
-	if message then lib.notify({ description = shared.locale('items_confiscated') }) end
+	if message then lib.notify({ description = locale('items_confiscated') }) end
 	if currentWeapon then currentWeapon = Weapon.Disarm(currentWeapon) end
 	client.closeInventory()
 	table.wipe(PlayerData.inventory)
 	client.setPlayerData('weight', 0)
 end)
 
-local function nearbyDrop(self)
-	if not self.instance or self.instance == currentInstance then
+
+---@param point CPoint
+local function nearbyDrop(point)
+	if not point.instance or point.instance == currentInstance then
 		---@diagnostic disable-next-line: param-type-mismatch
-		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 150, 30, 30, 222, false, false, 0, true, false, false, false)
+		DrawMarker(2, point.coords.x, point.coords.y, point.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 150, 30, 30, 222, false, false, 0, true, false, false, false)
 	end
 end
 
@@ -769,16 +850,20 @@ RegisterNetEvent('ox_inventory:createDrop', function(drop, data, owner, slot)
 		})
 	end
 
-	if owner == PlayerData.source and invOpen and #(GetEntityCoords(cache.ped) - data.coords) <= 1 then
-		if currentWeapon?.slot == slot then currentWeapon = Weapon.Disarm(currentWeapon) end
+	if owner == PlayerData.source then
+		if currentWeapon?.slot == slot then
+			currentWeapon = Weapon.Disarm(currentWeapon)
+		end
 
-		if not cache.vehicle then
-			client.openInventory('drop', drop)
-		else
-			SendNUIMessage({
-				action = 'setupInventory',
-				data = { rightInventory = currentInventory }
-			})
+		if invOpen and #(GetEntityCoords(playerPed) - data.coords) <= 1 then
+			if not cache.vehicle then
+				client.openInventory('drop', drop)
+			else
+				SendNUIMessage({
+					action = 'setupInventory',
+					data = { rightInventory = currentInventory }
+				})
+			end
 		end
 	end
 end)
@@ -820,10 +905,6 @@ local function setStateBagHandler(stateId)
 	setStateBagHandler = nil
 end
 
-lib.onCache('ped', function()
-	Utils.WeaponWheel()
-end)
-
 lib.onCache('seat', function(seat)
 	if seat then
 		if DoesVehicleHaveWeapons(cache.vehicle) then
@@ -849,11 +930,38 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 
 	if setStateBagHandler then setStateBagHandler(('player:%s'):format(source)) end
 
+	local ItemData = table.create(0, #Items)
+
+	for _, v in pairs(Items) do
+		local buttons = v.buttons and {} or nil
+
+		if buttons then
+			for i = 1, #v.buttons do
+				buttons[i] = v.buttons[i].label
+			end
+		end
+
+		ItemData[v.name] = {
+			label = v.label,
+			stack = v.stack,
+			close = v.close,
+			count = 0,
+			description = v.description,
+			buttons = buttons
+		}
+	end
+
 	for _, data in pairs(inventory) do
 		local item = Items[data.name]
 
 		if item then
 			item.count += data.count
+			ItemData[data.name].count += data.count
+			local add = item.client?.add
+
+			if add then
+				add(item.count)
+			end
 		end
 	end
 
@@ -870,29 +978,9 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	currentWeapon = nil
 	Weapon.ClearAll()
 
-	local ItemData = table.create(0, #Items)
-
-	for _, v in pairs(Items) do
-		local buttons = {}
-
-		if v.buttons then
-			for id, button in pairs(v.buttons) do
-				buttons[id] = button.label
-			end
-		end
-
-		ItemData[v.name] = {
-			label = v.label,
-			stack = v.stack,
-			close = v.close,
-			description = v.description,
-			buttons = buttons
-		}
-	end
-
 	local locales = {}
 
-	for k, v in pairs(shared.locale()) do
+	for k, v in pairs(lib.getLocales()) do
 		if k:find('ui_') or k == '$' then
 			locales[k] = v
 		end
@@ -907,6 +995,35 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 			invId = k,
 			instance = v.instance,
 			nearby = nearbyDrop
+		})
+	end
+
+	TriggerEvent('ox_inventory:updateInventory', PlayerData.inventory)
+
+	---@param point CPoint
+	local function nearbyLicense(point)
+		---@diagnostic disable-next-line: param-type-mismatch
+		DrawMarker(2, point.coords.x, point.coords.y, point.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 30, 150, 30, 222, false, false, 0, true, false, false, false)
+
+		if point.isClosest and point.currentDistance < 1.2 and IsControlJustReleased(0, 38) then
+			lib.callback('ox_inventory:buyLicense', 1000, function(success, message)
+				if success then
+					lib.notify ({ description = locale(message) })
+				elseif success == false then
+					lib.notify ({ type = 'error', description = locale(message) })
+				end
+			end, point.invId)
+		end
+	end
+
+	for id, data in pairs(data('licenses')) do
+		lib.points.new({
+			coords = data.coords,
+			distance = 16,
+			inv = 'license',
+			type = data.name,
+			invId = id,
+			nearby = nearbyLicense
 		})
 	end
 
@@ -929,47 +1046,18 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 
 	PlayerData.loaded = true
 
+	lib.notify({ description = locale('inventory_setup') })
 	Shops()
 	Inventory.Stashes()
 	Inventory.Evidence()
 	registerCommands()
-	TriggerEvent('ox_inventory:updateInventory', PlayerData.inventory)
-	lib.notify({ description = shared.locale('inventory_setup') })
-
-	local function nearbyLicense(self)
-		---@diagnostic disable-next-line: param-type-mismatch
-		DrawMarker(2, self.coords.x, self.coords.y, self.coords.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.2, 0.15, 30, 150, 30, 222, false, false, 0, true, false, false, false)
-
-		if self.currentDistance < 1.2 and lib.points.closest().id == self.id and IsControlJustReleased(0, 38) then
-			lib.callback('ox_inventory:buyLicense', 1000, function(success, message)
-				if success then
-					lib.notify ({ description = shared.locale(message) })
-				elseif success == false then
-					lib.notify ({ type = 'error', description = shared.locale(message) })
-				end
-			end, self.invId)
-		end
-	end
-
-	for id, data in pairs(data('licenses')) do
-		lib.points.new({
-			coords = data.coords,
-			distance = 16,
-			inv = 'license',
-			type = data.name,
-			invId = id,
-			nearby = nearbyLicense
-		})
-	end
 
 	client.interval = SetInterval(function()
-		local playerPed = cache.ped
-
 		if invOpen == false then
 			playerCoords = GetEntityCoords(playerPed)
 
-			if currentWeapon and IsPedUsingActionMode(cache.ped) then
-				SetPedUsingActionMode(cache.ped, false, -1, 'DEFAULT_ACTION')
+			if currentWeapon and IsPedUsingActionMode(playerPed) then
+				SetPedUsingActionMode(playerPed, false, -1, 'DEFAULT_ACTION')
 			end
 
 		elseif invOpen == true then
@@ -986,14 +1074,14 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 
 						if not id or #(playerCoords - pedCoords) > 1.8 or not (client.hasGroup(shared.police) or canOpenTarget(ped)) then
 							client.closeInventory()
-							lib.notify({ type = 'error', description = shared.locale('inventory_lost_access') })
+							lib.notify({ type = 'error', description = locale('inventory_lost_access') })
 						else
 							TaskTurnPedToFaceCoord(playerPed, pedCoords.x, pedCoords.y, pedCoords.z, 50)
 						end
 
 					elseif currentInventory.coords and (#(playerCoords - currentInventory.coords) > (currentInventory.distance or 2.0) or canOpenTarget(playerPed)) then
 						client.closeInventory()
-						lib.notify({ type = 'error', description = shared.locale('inventory_lost_access') })
+						lib.notify({ type = 'error', description = locale('inventory_lost_access') })
 					end
 				end
 			end
@@ -1006,7 +1094,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 			currentWeapon = Weapon.Disarm(currentWeapon, true)
 
 			if weaponHash == `WEAPON_HANDCUFFS` or weaponHash == `WEAPON_GARBAGEBAG` or weaponHash == `WEAPON_BRIEFCASE` or weaponHash == `WEAPON_BRIEFCASE_02` then
-				SetCurrentPedWeapon(cache.ped, weaponHash --[[@as number]], true)
+				SetCurrentPedWeapon(playerPed, weaponHash --[[@as number]], true)
 			end
 		end
 
@@ -1026,6 +1114,8 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 	local DisablePlayerFiring = DisablePlayerFiring
 	local HudWeaponWheelIgnoreSelection = HudWeaponWheelIgnoreSelection
 	local DisableControlAction = DisableControlAction
+	local IsPedShooting = IsPedShooting
+	local IsControlJustReleased = IsControlJustReleased
 
 	client.tick = SetInterval(function()
 		DisablePlayerVehicleRewards(playerId)
@@ -1043,7 +1133,6 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 				EnableControlAction(0, 31, true)
 			end
 		else
-			local playerPed = cache.ped
 			disableControls()
 
 			if invBusy == 1 or IsPedCuffed(playerPed) then
@@ -1077,7 +1166,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 					if IsPedShooting(playerPed) then
 						local currentAmmo
 
-						if currentWeapon.hash == `WEAPON_PETROLCAN` or currentWeapon.hash == `WEAPON_HAZARDCAN` or currentWeapon.hash == `WEAPON_FIREEXTINGUISHER` then
+						if currentWeapon.hash == `WEAPON_PETROLCAN` or currentWeapon.hash == `WEAPON_HAZARDCAN` or currentWeapon.hash == `WEAPON_FERTILIZERCAN` or currentWeapon.hash == `WEAPON_FIREEXTINGUISHER` then
 							currentAmmo = currentWeapon.metadata.ammo - 0.05
 
 							if currentAmmo <= 0 then
@@ -1088,9 +1177,11 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 						currentWeapon.metadata.ammo = (currentWeapon.metadata.ammo < currentAmmo) and 0 or currentAmmo
 
 						if currentAmmo <= 0 then
-							ClearPedTasks(playerPed)
-							SetCurrentPedWeapon(playerPed, currentWeapon.hash, true)
-							SetPedCurrentWeaponVisible(playerPed, true, false, false, false)
+							if cache.vehicle then
+								SetCurrentPedWeapon(playerPed, currentWeapon.hash, true)
+								SetPedCurrentWeaponVisible(playerPed, true, false, false, false)
+							end
+
 							if currentWeapon?.ammo and client.autoreload and not lib.progressActive() and not IsPedRagdoll(playerPed) and not IsPedFalling(playerPed) then
 								currentWeapon.timer = 0
 								local ammo = Inventory.Search(1, currentWeapon.ammo)
@@ -1105,10 +1196,11 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 				elseif IsControlJustReleased(0, 24) then
 					if currentWeapon.throwable then
 						plyState.invBusy = true
+						local weapon = currentWeapon
 
 						SetTimeout(700, function()
 							ClearPedSecondaryTask(playerPed)
-							RemoveWeaponFromPed(playerPed, currentWeapon.hash)
+							RemoveWeaponFromPed(playerPed, weapon.hash)
 							TriggerServerEvent('ox_inventory:updateWeapon', 'throw')
 							currentWeapon = nil
 							TriggerEvent('ox_inventory:currentWeapon')
@@ -1166,11 +1258,11 @@ end)
 RegisterNUICallback('removeComponent', function(data, cb)
 	cb(1)
 	if currentWeapon then
-		if data.slot ~= currentWeapon.slot then return lib.notify({ type = 'error', description = shared.locale('weapon_hand_wrong') }) end
+		if data.slot ~= currentWeapon.slot then return lib.notify({ type = 'error', description = locale('weapon_hand_wrong') }) end
 		local itemSlot = PlayerData.inventory[currentWeapon.slot]
 		for _, component in pairs(Items[data.component].client.component) do
-			if HasPedGotWeaponComponent(cache.ped, currentWeapon.hash, component) then
-				RemoveWeaponComponentFromPed(cache.ped, currentWeapon.hash, component)
+			if HasPedGotWeaponComponent(playerPed, currentWeapon.hash, component) then
+				RemoveWeaponComponentFromPed(playerPed, currentWeapon.hash, component)
 				for k, v in pairs(itemSlot.metadata.components) do
 					if v == data.component then
 						table.remove(itemSlot.metadata.components, k)
@@ -1195,7 +1287,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 	local target
 
 	if client.giveplayerlist then
-		local nearbyPlayers = lib.getNearbyPlayers(GetEntityCoords(cache.ped), 2.0)
+		local nearbyPlayers = lib.getNearbyPlayers(GetEntityCoords(playerPed), 2.0)
 
 		if #nearbyPlayers == 0 then return end
 
@@ -1231,7 +1323,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 	else
 		local entity = Utils.Raycast(12)
 
-		if entity and IsPedAPlayer(entity) and #(GetEntityCoords(cache.ped, true) - GetEntityCoords(entity, true)) < 2.0 then
+		if entity and IsPedAPlayer(entity) and #(GetEntityCoords(playerPed, true) - GetEntityCoords(entity, true)) < 2.0 then
 			target = GetPlayerServerId(NetworkGetPlayerIndexFromPed(entity))
 			Utils.PlayAnim(2000, 'mp_common', 'givetake1_a', 1.0, 1.0, -1, 50, 0.0, 0, 0, 0)
 		end
@@ -1256,6 +1348,24 @@ RegisterNUICallback('exit', function(_, cb)
 	cb(1)
 end)
 
+lib.callback.register('ox_inventory:startCrafting', function(id, recipe)
+	recipe = client.craftingBenches[id].items[recipe]
+
+	return lib.progressCircle({
+		label = locale('crafting_item', Items[recipe.name].label),
+		duration = recipe.duration or 3000,
+		canCancel = true,
+		disable = {
+			move = true,
+			combat = true,
+		},
+		anim = {
+			dict = 'anim@amb@clubhouse@tutorial@bkr_tut_ig3@',
+			clip = 'machinic_loop_mechandplayer',
+		}
+	})
+end)
+
 ---Synchronise and validate all item movement between the NUI and server.
 RegisterNUICallback('swapItems', function(data, cb)
 	if data.toType == 'newdrop' and cache.vehicle then
@@ -1264,6 +1374,12 @@ RegisterNUICallback('swapItems', function(data, cb)
 
 	if currentInstance then
 		data.instance = currentInstance
+	end
+
+	if currentWeapon and data.fromType ~= data.toType then
+		if (data.fromType == 'player' and data.fromSlot == currentWeapon.slot) or (data.toType == 'player' and data.toSlot == currentWeapon.slot) then
+			currentWeapon = Weapon.Disarm(currentWeapon, true)
+		end
 	end
 
 	local success, response, weaponSlot = lib.callback.await('ox_inventory:swapItems', false, data)
@@ -1276,10 +1392,9 @@ RegisterNUICallback('swapItems', function(data, cb)
 				currentWeapon.slot = weaponSlot
 				TriggerEvent('ox_inventory:currentWeapon', currentWeapon)
 			end
-
 		end
 	elseif response then
-		lib.notify({ type = 'error', description = shared.locale(response) })
+		lib.notify({ type = 'error', description = locale(response) })
 	end
 
 	if data.toType == 'newdrop' then
@@ -1291,11 +1406,10 @@ end)
 
 RegisterNUICallback('buyItem', function(data, cb)
 	local response, data, message = lib.callback.await('ox_inventory:buyItem', 100, data)
+
 	if data then
-		PlayerData.inventory[data[1]] = data[2]
-		client.setPlayerData('inventory', PlayerData.inventory)
-		client.setPlayerData('weight', data[4])
-		SendNUIMessage({ action = 'refreshSlots', data = data[3] and {{item = data[2]}, {item = data[3], inventory = 'shop'}} or {item = data[2]}})
+		updateInventory({[data[1]] = data[2]}, data[4])
+		SendNUIMessage({ action = 'refreshSlots', data = data[3] and {items = {{item = data[2]}, {item = data[3], inventory = 'shop'}}} or {items = {item = data[2]}}})
 	end
 
 	if message then
@@ -1303,4 +1417,27 @@ RegisterNUICallback('buyItem', function(data, cb)
 	end
 
 	cb(response)
+end)
+
+RegisterNUICallback('craftItem', function(data, cb)
+	cb(true)
+
+	local id, index = currentInventory.id, currentInventory.index
+	local success, response = lib.callback.await('ox_inventory:craftItem', 200, currentInventory.id, currentInventory.index, data.fromSlot, data.toSlot)
+
+	if not success then
+		lib.notify({ type = 'error', description = locale(response or 'cannot_perform') })
+	end
+
+	if not currentInventory or currentInventory.type ~= 'crafting' then
+		client.openInventory('crafting', { id = id, index = index })
+	end
+end)
+
+lib.callback.register('ox_inventory:getVehicleData', function(netid)
+	local entity = NetworkGetEntityFromNetworkId(netid)
+
+	if entity then
+		return GetEntityModel(entity), GetVehicleClass(entity)
+	end
 end)

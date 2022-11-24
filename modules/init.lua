@@ -1,22 +1,20 @@
-IsDuplicityVersion = IsDuplicityVersion()
+lib.locale()
 
 -- Don't be an idiot and change these convar getters (yes, people do that).
--- https://overextended.github.io/docs/ox_inventory/config
+-- https://overextended.github.io/docs/ox_inventory/Getting%20Started/config
 
 shared = {
 	resource = GetCurrentResourceName(),
 	framework = GetConvar('inventory:framework', 'esx'),
-	locale = GetConvar('inventory:locale', 'en'),
 	playerslots = GetConvarInt('inventory:slots', 50),
 	playerweight = GetConvarInt('inventory:weight', 30000),
-	trimplate = GetConvar('inventory:trimplate', 'true') == 'true',
-	qtarget = GetConvar('inventory:qtarget', 'true') == 'true',
+	target = GetConvar('inventory:target', 'false') == 'true',
 	police = json.decode(GetConvar('inventory:police', '["police", "sheriff"]')),
 }
 
 do
 	if type(shared.police) == 'string' then
-		shared.police = {shared.police}
+		shared.police = { shared.police }
 	end
 
 	local police = table.create(0, #shared.police)
@@ -27,12 +25,13 @@ do
 	shared.police = police
 end
 
-if IsDuplicityVersion then
+if IsDuplicityVersion() then
 	server = {
+		loglevel = GetConvarInt('inventory:loglevel', 1),
 		randomprices = GetConvar('inventory:randomprices', 'false') == 'true',
-		versioncheck = GetConvar('inventory:versioncheck', 'true') == 'true',
 		randomloot = GetConvar('inventory:randomloot', 'true') == 'true',
 		evidencegrade = GetConvarInt('inventory:evidencegrade', 2),
+		trimplate = GetConvar('inventory:trimplate', 'true') == 'true',
 		vehicleloot = json.decode(GetConvar('inventory:vehicleloot', [[
 			[
 				["cola", 1, 1],
@@ -58,16 +57,19 @@ else
 	client = {
 		autoreload = GetConvar('inventory:autoreload', 'false') == 'true',
 		screenblur = GetConvar('inventory:screenblur', 'true') == 'true',
-		keys = json.decode(GetConvar('inventory:keys', '["F2", "K", "TAB"]')),
+		keys = json.decode(GetConvar('inventory:keys', '')) or { 'F2', 'K', 'TAB' },
 		enablekeys = json.decode(GetConvar('inventory:enablekeys', '[249]')),
 		aimedfiring = GetConvar('inventory:aimedfiring', 'false') == 'true',
 		giveplayerlist = GetConvar('inventory:giveplayerlist', 'false') == 'true',
 		weaponanims = GetConvar('inventory:weaponanims', 'true') == 'true',
+		itemnotify = GetConvar('inventory:itemnotify', 'true') == 'true',
 	}
 end
 
 function shared.print(...) print(string.strjoin(' ', ...)) end
+
 function shared.info(...) shared.print('^2[info]^7', ...) end
+
 function shared.warning(...) shared.print('^3[warning]^7', ...) end
 
 -- People like ignoring errors for some reason
@@ -86,7 +88,7 @@ local function spamError(err)
 end
 
 if shared.framework == 'ox' then
-	local file = ('imports/%s.lua'):format(lib.service)
+	local file = ('imports/%s.lua'):format(lib.context)
 	local import = LoadResourceFile('ox_core', file)
 	local func, err = load(import, ('@@ox_core/%s'):format(file))
 
@@ -125,7 +127,7 @@ local success, msg = lib.checkDependency('oxmysql', '2.4.0')
 
 if not success then return spamError(msg) end
 
-success, msg = lib.checkDependency('ox_lib', '2.9.0')
+success, msg = lib.checkDependency('ox_lib', '2.15.1')
 
 if not success then spamError(msg) end
 
@@ -133,23 +135,16 @@ if not LoadResourceFile(shared.resource, 'web/build/index.html') then
 	return spamError('UI has not been built, refer to the documentation or download a release build.\n	^3https://overextended.github.io/docs/ox_inventory/^0')
 end
 
--- Disable qtarget compatibility if it isn't running
-if shared.qtarget and not GetResourceState('qtarget'):find('start') and not GetResourceState('ox_target'):find('start') then
-	shared.qtarget = false
-	shared.warning(("qtarget is '%s' - ensure it is starting before ox_inventory"):format(GetResourceState('qtarget')))
+if shared.target then
+	local ox_target = GetResourceState('ox_target'):find('start')
+	local qtarget = GetResourceState('qtarget'):find('start')
+
+	if not ox_target and not qtarget then
+		shared.target = false
+		return shared.warning('targeting resource is not loaded - it should start before ox_inventory')
+	end
+
+	shared.target = ox_target and 'ox_target' or 'qtarget'
 end
 
 if shared.server then shared.ready = false end
-
-local Locales = data('locales/'..shared.locale)
-
----@param str any
----@param ... unknown
----@return string
-function shared.locale(str, ...)
-	---@diagnostic disable-next-line: return-type-mismatch
-	if not str then return Locales end
-
-	str = Locales[str]
-	return str and str:format(...)
-end

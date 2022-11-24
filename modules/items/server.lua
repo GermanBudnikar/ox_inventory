@@ -1,7 +1,9 @@
 if not lib then return end
 
+---@overload fun(name: string): OxServerItem
 local Items = {}
 local ItemList = shared.items
+---@cast ItemList { [string]: OxServerItem }
 
 TriggerEvent('ox_inventory:itemList', ItemList)
 
@@ -35,10 +37,10 @@ local trash = {
 	{description = 'An empty chips bag.', weight = 5, image = 'trash_chips'},
 }
 
----@param internal table?
+---@param _ table?
 ---@param name string?
 ---@return table?
-local function getItem(internal, name)
+local function getItem(_, name)
 	if name then
 		name = name:lower()
 
@@ -52,7 +54,7 @@ local function getItem(internal, name)
 	return ItemList
 end
 
-setmetatable(Items, {
+setmetatable(Items --[[@as table]], {
 	__call = getItem
 })
 
@@ -106,7 +108,7 @@ CreateThread(function()
 					if not ItemList[formatName] then
 						fileSize += 1
 
-						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"):lower(), item.weight, item.stack, item.close, item.description and ('"%s"'):format(item.description) or 'nil')
+						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"), item.weight, item.stack, item.close, item.description and json.encode(item.description) or 'nil')
 						ItemList[formatName] = item
 					end
 				end
@@ -190,7 +192,7 @@ CreateThread(function()
 					if not ItemList[formatName] then
 						fileSize += 1
 
-						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"):lower(), item.weight, item.stack, item.close, item.description and ('"%s"'):format(item.description) or 'nil')
+						file[fileSize] = (itemFormat):format(formatName, item.label:gsub("'", "\\'"), item.weight, item.stack, item.close, item.description and json.encode(item.description) or 'nil')
 						ItemList[formatName] = item
 					end
 				end
@@ -242,9 +244,23 @@ local function GenerateSerial(text)
 	return ('%s%s%s'):format(math.random(100000,999999), text == nil and GenerateText(3) or text, math.random(100000,999999))
 end
 
+local function setItemDurability(item, metadata)
+	local degrade = item.degrade
+
+	if degrade then
+		metadata.durability = os.time()+(degrade * 60)
+		metadata.degrade = degrade
+	elseif item.durability then
+		metadata.durability = 100
+	end
+
+	return metadata
+end
+
 function Items.Metadata(inv, item, metadata, count)
 	if type(inv) ~= 'table' then inv = Inventory(inv) end
 	if not item.weapon then metadata = not metadata and {} or type(metadata) == 'string' and {type=metadata} or metadata end
+	if not count then count = 1 end
 
 	if item.weapon then
 		if type(metadata) ~= 'table' then metadata = {} end
@@ -263,7 +279,7 @@ function Items.Metadata(inv, item, metadata, count)
 			end
 		end
 
-		if item.hash == `WEAPON_PETROLCAN` or item.hash == `WEAPON_HAZARDCAN` or item.hash == `WEAPON_FIREEXTINGUISHER` then
+		if item.hash == `WEAPON_PETROLCAN` or item.hash == `WEAPON_HAZARDCAN` or item.hash == `WEAPON_FERTILIZERCAN` or item.hash == `WEAPON_FIREEXTINGUISHER` then
 			metadata.ammo = metadata.durability
 		end
 	else
@@ -273,29 +289,39 @@ function Items.Metadata(inv, item, metadata, count)
 			count = 1
 			metadata.container = metadata.container or GenerateText(3)..os.time()
 			metadata.size = container.size
-		elseif item.name == 'identification' then
-			count = 1
-			if next(metadata) == nil then
+		elseif not next(metadata) then
+			if item.name == 'identification' then
+				count = 1
 				metadata = {
 					type = inv.player.name,
-					description = shared.locale('identification', (inv.player.sex) and shared.locale('male') or shared.locale('female'), inv.player.dateofbirth)
+					description = locale('identification', (inv.player.sex) and locale('male') or locale('female'), inv.player.dateofbirth)
 				}
+			elseif item.name == 'garbage' then
+				local trashType = trash[math.random(1, #trash)]
+				metadata.image = trashType.image
+				metadata.weight = trashType.weight
+				metadata.description = trashType.description
 			end
-		elseif item.name == 'garbage' then
-			local trashType = trash[math.random(1, #trash)]
-			metadata.image = trashType.image
-			metadata.weight = trashType.weight
-			metadata.description = trashType.description
 		end
 
-		if not metadata?.durability then
-			local durability = ItemList[item.name].degrade
-			if durability then metadata.durability = os.time()+(durability * 60) metadata.degrade = durability end
+		if not metadata.durability then
+			metadata = setItemDurability(ItemList[item.name], metadata)
 		end
 	end
 
 	if count > 1 and not item.stack then
 		count = 1
+	end
+
+	local response = TriggerEventHooks('createItem', {
+		inventoryId = inv and inv.id,
+		metadata = metadata,
+		item = item,
+		count = count,
+	})
+
+	if type(response) == 'table' then
+		metadata = response
 	end
 
 	return metadata, count
@@ -311,11 +337,15 @@ function Items.CheckMetadata(metadata, item, name, ostime)
 	local durability = metadata.durability
 
 	if durability then
-		if not item.durability and not item.degrade and not item.weapon then
-			metadata.durability = nil
-		elseif durability > 100 and ostime >= durability then
+		if durability > 100 and ostime >= durability then
 			metadata.durability = 0
 		end
+	else
+		metadata = setItemDurability(item, metadata)
+	end
+
+	if metadata.durability and not item.durability then
+		metadata.durability = nil
 	end
 
 	if metadata.components then

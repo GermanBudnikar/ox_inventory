@@ -71,7 +71,15 @@ end
 RegisterNetEvent('ox_inventory:notify', Utils.Notify)
 exports('notify', Utils.Notify)
 
-function Utils.ItemNotify(data) SendNUIMessage({action = 'itemNotify', data = data}) end
+function Utils.ItemNotify(data)
+	if not client.itemnotify then
+		return
+	end
+
+	SendNUIMessage({action = 'itemNotify', data = data})
+end
+
+RegisterNetEvent('ox_inventory:itemNotify', Utils.ItemNotify)
 
 function Utils.DeleteObject(obj)
 	SetEntityAsMissionEntity(obj, false, true)
@@ -86,7 +94,6 @@ function Utils.WeaponWheel(state)
 	EnableWeaponWheel = state
 	SetWeaponsNoAutoswap(not state)
 	SetWeaponsNoAutoreload(not state)
-	SetPedCanSwitchWeapon(cache.ped, state)
 end
 exports('weaponWheel', Utils.WeaponWheel)
 

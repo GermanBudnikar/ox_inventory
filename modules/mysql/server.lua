@@ -33,7 +33,7 @@ Citizen.CreateThreadNow(function()
 		playerTable = 'characters'
 		playerColumn = 'character_id'
 		vehicleTable = 'vehicles'
-		vehicleColumn = 'plate'
+		vehicleColumn = 'id'
 	end
 
 	for k, v in pairs(Query) do
@@ -108,7 +108,7 @@ end)
 db = {}
 
 function db.loadPlayer(identifier)
-	local inventory = MySQL.prepare.await(Query.SELECT_PLAYER, { identifier })
+	local inventory = MySQL.prepare.await(Query.SELECT_PLAYER, { identifier }) --[[@as string?]]
 	return inventory and json.decode(inventory)
 end
 

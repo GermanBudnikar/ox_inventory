@@ -27,7 +27,8 @@ return {
 					print('You squeezed the burger :(')
 				end
 			}
-		}
+		},
+		consume = 0.3
 	},
 
 	['bandage'] = {
@@ -174,12 +175,23 @@ return {
 		stack = false,
 		client = {
 			anim = { dict = 'clothingshirt', clip = 'try_shirt_positive_d' },
-            usetime = 3500
+			usetime = 3500
 		}
 	},
 
 	['clothing'] = {
 		label = 'Clothing',
 		consume = 0,
+	},
+
+	['mastercard'] = {
+		label = 'Mastercard',
+		stack = false,
+		weight = 10,
+	},
+
+	['scrapmetal'] = {
+		label = 'Scrap Metal',
+		weight = 80,
 	},
 }

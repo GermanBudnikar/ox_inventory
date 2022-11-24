@@ -1,8 +1,9 @@
 local playerDropped = ...
-local Inventory
+local Inventory, Items
 
 CreateThread(function()
 	Inventory = server.inventory
+	Items = server.items
 end)
 
 local QBCore
@@ -47,11 +48,11 @@ local function setupPlayer(Player)
 	Inventory.SetItem(Player.PlayerData.source, 'money', Player.PlayerData.money.cash)
 
 	QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "AddItem", function(item, amount, slot, info)
-		Inventory.AddItem(Player.PlayerData.source, item, amount, info, slot)
+		return Inventory.AddItem(Player.PlayerData.source, item, amount, info, slot)
 	end)
 
 	QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "RemoveItem", function(item, amount, slot)
-		Inventory.RemoveItem(Player.PlayerData.source, item, amount, nil, slot)
+		return Inventory.RemoveItem(Player.PlayerData.source, item, amount, nil, slot)
 	end)
 
 	QBCore.Functions.AddPlayerMethod(Player.PlayerData.source, "GetItemBySlot", function(slot)
@@ -162,4 +163,50 @@ function server.buyLicense(inv, license)
 	player.Functions.SetMetaData('licences', player.PlayerData.metadata.licences)
 
 	return true, 'bought_weapon_license'
+end
+
+--- Takes traditional item data and updates it to support ox_inventory, i.e.
+--- ```
+--- Old: {1:{"name": "cola", "amount": 1, "label": "Cola", "slot": 1}, 2:{"name": "burger", "amount": 3, "label": "Burger", "slot": 2}}
+--- New: [{"slot":1,"name":"cola","count":1}, {"slot":2,"name":"burger","count":3}]
+---```
+function server.convertInventory(playerId, items)
+	if type(items) == 'table' then
+		local player = server.GetPlayerFromId(playerId)
+		local returnData, totalWeight = table.create(#items, 0), 0
+		local slot = 0
+
+		if player then
+			for name in pairs(server.accounts) do
+				local hasThis = false
+				for _, data in pairs(items) do
+					if data.name == name then
+						hasThis = true
+					end
+				end
+
+				if not hasThis then
+					local amount = player.Functions.GetMoney(name == 'money' and 'cash' or name)
+
+					if amount then
+						items[#items + 1] = { name = name, amount = amount }
+					end
+				end
+			end
+		end
+
+		for _, data in pairs(items) do
+			local item = Items(data.name)
+
+			if item?.name then
+				local metadata, count = Items.Metadata(playerId, item, data.info, data.amount or data.count or 1)
+				local weight = Inventory.SlotWeight(item, {count = count, metadata = metadata})
+				totalWeight += weight
+				slot += 1
+				returnData[slot] = {name = item.name, label = item.label, weight = weight, slot = slot, count = count, description = item.description, metadata = metadata, stack = item.stack, close = item.close}
+			end
+		end
+
+		return returnData, totalWeight
+	end
 end

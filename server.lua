@@ -1,6 +1,8 @@
 if not lib then return end
 
-lib.versionCheck('overextended/ox_inventory')
+if GetConvar('inventory:versioncheck', 'true') == 'true' then
+	lib.versionCheck('overextended/ox_inventory')
+end
 
 local Inventory = server.inventory
 local Items = server.items
@@ -23,7 +25,7 @@ function server.setPlayerInventory(player, data)
 		local ostime = os.time()
 
 		for _, v in pairs(data) do
-			if type(v) == 'number' then
+			if type(v) == 'number' or not v.count then
 				if server.convertInventory then
 					inventory, totalWeight = server.convertInventory(player.source, data)
 					break
@@ -34,10 +36,7 @@ function server.setPlayerInventory(player, data)
 				local item = Items(v.name)
 
 				if item then
-					if v.metadata then
-						v.metadata = Items.CheckMetadata(v.metadata, item, v.name, ostime)
-					end
-
+					v.metadata = Items.CheckMetadata(v.metadata or {}, item, v.name, ostime)
 					local weight = Inventory.SlotWeight(item, v)
 					totalWeight = totalWeight + weight
 
@@ -49,22 +48,23 @@ function server.setPlayerInventory(player, data)
 
 	player.source = tonumber(player.source)
 	local inv = Inventory.Create(player.source, player.name, 'player', shared.playerslots, totalWeight, shared.playerweight, player.identifier, inventory)
-	inv.player = server.setPlayerData(player)
-	inv.player.ped = GetPlayerPed(player.source)
 
-	if server.syncInventory then server.syncInventory(inv) end
-	TriggerClientEvent('ox_inventory:setPlayerInventory', player.source, Inventory.Drops, inventory, totalWeight, inv.player, player.source)
+	if inv then
+		inv.player = server.setPlayerData(player)
+		inv.player.ped = GetPlayerPed(player.source)
+
+		if server.syncInventory then server.syncInventory(inv) end
+		TriggerClientEvent('ox_inventory:setPlayerInventory', player.source, Inventory.Drops, inventory, totalWeight, inv.player, player.source)
+	end
 end
 exports('setPlayerInventory', server.setPlayerInventory)
 AddEventHandler('ox_inventory:setPlayerInventory', server.setPlayerInventory)
-
-local Vehicles = data 'vehicles'
 
 lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 	if Inventory.Lock then return false end
 
 	local left = Inventory(source)
-	local right = left.open and Inventory(left.open)
+	local right = left.open and left.open ~= true and Inventory(left.open) or nil
 
 	if right then
 		if right.open ~= source then return end
@@ -83,39 +83,18 @@ lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 			right = Inventory(data, left)
 			if right == false then return false end
 		elseif type(data) == 'table' then
-			if data.class and data.model then
-				right = Inventory(data.id)
-				if not right then
-					local vehicleData = Vehicles[inv]['models'][data.model] or Vehicles[inv][data.class]
-					local plate = shared.trimplate and string.strtrim(data.id:sub(6)) or data.id:sub(6)
-
-					if Ox then
-						local vehicle = Ox.GetVehicleFromNetId(data.netid)
-
-						if vehicle then
-							right = Inventory.Create(vehicle.id or vehicle.plate, plate, inv, vehicleData[1], 0, vehicleData[2], false)
-						end
-					end
-
-					if not right then
-						right = Inventory.Create(data.id, plate, inv, vehicleData[1], 0, vehicleData[2], false)
-					end
-				end
+			if data.netid then
+				data.type = inv
+				right = Inventory(data)
 			elseif inv == 'drop' then
 				right = Inventory(data.id)
 			else
 				return
 			end
-
 		elseif inv == 'policeevidence' then
 			if server.hasGroup(left, shared.police) then
-				data = ('evidence-%s'):format(data)
-				right = Inventory(data)
-				if not right then
-					right = Inventory.Create(data, shared.locale('police_evidence'), inv, 100, 0, 100000, false)
-				end
+				right = Inventory(('evidence-%s'):format(data))
 			end
-
 		elseif inv == 'dumpster' then
 			right = Inventory(data)
 
@@ -125,10 +104,9 @@ lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 				-- dumpsters do not work with entity lockdown. need to rewrite, but having to do
 				-- distance checks to some ~7000 dumpsters and freeze the entities isn't ideal
 				if netid and NetworkGetEntityFromNetworkId(netid) > 0 then
-					right = Inventory.Create(data, shared.locale('dumpster'), inv, 15, 0, 100000, false)
+					right = Inventory.Create(data, locale('dumpster'), inv, 15, 0, 100000, false)
 				end
 			end
-
 		elseif inv == 'container' then
 			left.containerSlot = data
 			data = left.items[data]
@@ -140,11 +118,16 @@ lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 					right = Inventory.Create(data.metadata.container, data.label, inv, data.metadata.size[1], 0, data.metadata.size[2], false)
 				end
 			else left.containerSlot = nil end
-
 		else right = Inventory(data) end
 
 		if right then
 			if right.open or (right.groups and not server.hasGroup(left, right.groups)) then return end
+
+			if not TriggerEventHooks('openInventory', {
+				source = source,
+				inventoryId = right.id,
+				inventoryType = right.type,
+			}) then return end
 
 			local otherplayer = right.type == 'player'
 			if otherplayer then right.coords = GetEntityCoords(GetPlayerPed(right.id)) end
@@ -155,7 +138,6 @@ lib.callback.register('ox_inventory:openInventory', function(source, inv, data)
 				if otherplayer then
 					right:set('type', 'otherplayer')
 				end
-
 			else return end
 		else return end
 
@@ -210,23 +192,36 @@ lib.callback.register('ox_inventory:useItem', function(source, itemName, slot, m
 		if not data then return end
 
 		local durability = data.metadata?.durability
+		local consume = item.consume
 
-		if durability then
+		if durability and consume then
 			if durability > 100 then
-				if os.time() > durability then
+				local ostime = os.time()
+
+				if ostime > durability then
 					inventory.items[slot].metadata.durability = 0
-					TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = shared.locale('no_durability', data.label) })
-					return
+
+					return TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = locale('no_durability', data.label) })
+				elseif consume ~= 0 and consume < 1 then
+					local degrade = (data.metadata.degrade or item.degrade) * 60
+					local percentage = ((durability - ostime) * 100) / degrade
+
+					if percentage < consume * 100 then
+						return TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = locale('not_enough_durability', data.label) })
+					end
 				end
 			elseif durability <= 0 then
-				TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = shared.locale('no_durability', data.label) })
-				return
+				return TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = locale('no_durability', data.label) })
+			end
+
+			if data.count > 1 and consume < 1 and consume > 0 and not Inventory.GetEmptySlot(inventory) then
+				return TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = locale('cannot_use', data.label) })
 			end
 		end
 
 		if item and data and data.count > 0 and data.name == item.name then
 			inventory.usingItem = slot
-			data = {name=data.name, label=data.label, count=data.count, slot=slot or data.slot, metadata=data.metadata, consume=item.consume}
+			data = {name=data.name, label=data.label, count=data.count, slot=slot or data.slot, metadata=data.metadata, consume=consume}
 
 			if item.weapon then
 				inventory.weapon = inventory.weapon ~= data.slot and data.slot or nil
@@ -246,8 +241,8 @@ lib.callback.register('ox_inventory:useItem', function(source, itemName, slot, m
 				data.consume = 1
 				data.component = true
 				return data
-			elseif item.consume then
-				if data.count >= item.consume then
+			elseif consume then
+				if data.count >= consume then
 					local result = item.cb and item.cb('usingItem', item, inventory, slot)
 
 					if result == false then return end
@@ -258,9 +253,14 @@ lib.callback.register('ox_inventory:useItem', function(source, itemName, slot, m
 
 					return data
 				else
-					TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = shared.locale('item_not_enough', item.name) })
+					TriggerClientEvent('ox_lib:notify', source, { type = 'error', description = locale('item_not_enough', item.name) })
 				end
 			elseif server.UseItem then
+				-- This is used to call an external useItem function, i.e. ESX.UseItem / QBCore.Functions.CanUseItem
+				-- If an error is being thrown on item use there is no internal solution. We previously kept a list
+				-- of usable items which led to issues when restarting resources (for obvious reasons), but config
+				-- developers complained the inventory broke their items. Safely invoking registered item callbacks
+				-- should resolve issues, i.e. https://github.com/esx-framework/esx-legacy/commit/9fc382bbe0f5b96ff102dace73c424a53458c96e
 				pcall(server.UseItem, source, data.name, data)
 			end
 		end
